@@ -1,0 +1,13 @@
+[Unit]
+Description=Lab gateway VRRP (keepalived)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/keepalived -n -l -f /etc/keepalived/lab-gateway.conf --pid=/run/lab-keepalived.pid --vrrp_pid=/run/lab-keepalived-vrrp.pid --checkers_pid=/run/lab-keepalived-checkers.pid
+ExecStopPost=/bin/sh -c 'echo BACKUP > /run/lab-gateway-state; /usr/local/sbin/provider-gateway.sh once'
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

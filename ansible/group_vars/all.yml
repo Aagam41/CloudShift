@@ -1,0 +1,37 @@
+---
+lab_domain: cloud03.lab
+
+vlan: {mgmt: 10, storage: 20, tunnel: 30, api: 40, egress: 50, provider: 60, dns: 70}
+
+# First three octets of each /24. Host address = <prefix>.<host_id>   (see inventory.yml)
+net:
+  mgmt: "10.0.10"
+  storage: "10.0.20"
+  tunnel: "10.11.10"
+  api: "10.14.40"          # controllers only. (Was 192.168.1: that is your home Wi-Fi range.)
+  egress: "10.12.0"
+  dns: "10.0.70"
+
+internal_vip: 10.0.10.100  # Kolla/HAProxy VIP on VLAN 10
+external_vip: 10.14.40.100 # Kolla/HAProxy VIP on VLAN 40 (Horizon, Grafana, APIs)
+
+# ---- Internet gateway: floating addresses (VRRP) held by ONE healthy controller that has Wi-Fi ----
+gateway_egress_ip: 10.12.0.1        # default route of every node without its own Wi-Fi
+provider_cidr: 172.24.4.0/24        # Neutron provider / floating-IP network (VLAN 60)
+provider_gateway: 172.24.4.1        # gateway of that network, put on br-ex of the VRRP master
+gateway_vrid: 61                    # Kolla's own keepalived uses 51
+gateway_vrrp_password: cloud3gw     # exactly 8 characters (VRRP truncates longer ones)
+upstream_dns: [1.1.1.1, 8.8.8.8]
+physical_net: 192.168.0.0/24        # the untagged VLAN 1 network (Ansible/SSH access)
+
+# DNS servers = every controller, on VLAN 70 (computed from the inventory)
+dns_servers: "{{ groups['control'] | map('extract', hostvars, 'host_id') | map('regex_replace', '^', net.dns ~ '.') | list }}"
+
+# ---- Shared storage: GlusterFS, 3 copies, one on each controller ----
+gluster_brick_root: /srv/gluster     # bricks live in <root>/<volume>/brick on each controller
+gluster_arbiter: false               # true = third controller keeps only metadata (faster writes, 2 data copies)
+gluster_require_dedicated_disk: false  # true = refuse to put bricks on the root filesystem
+gluster_volumes:
+  nova:    {mount: /var/lib/nova-shared,    clients: compute, virt: true}   # VM disks (live migration)
+  glance:  {mount: /var/lib/glance-shared,  clients: control}               # images
+  gnocchi: {mount: /var/lib/gnocchi-shared, clients: control}               # telemetry data

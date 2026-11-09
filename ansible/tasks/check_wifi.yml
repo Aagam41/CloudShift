@@ -1,0 +1,27 @@
+# Included by 00-preflight.yml and 02-gateway-dns.yml (runs on the gateway host only)
+- name: Wi-Fi interface has an IPv4 default route
+  ansible.builtin.command: ip -4 route show default dev {{ wifi_if }}
+  register: wifi_route
+  changed_when: false
+  failed_when: wifi_route.stdout == ''
+
+- name: Wi-Fi network must not overlap any lab subnet
+  vars:
+    lab_subnets: "{{ (net.values() | map('regex_replace', '$', '.0/24') | list) + [provider_cidr, physical_net] }}"
+  ansible.builtin.shell: |
+    python3 - <<'PY'
+    import ipaddress, json, subprocess, sys
+    out = json.loads(subprocess.check_output(["ip", "-j", "-4", "addr", "show", "dev", "{{ wifi_if }}"]))
+    nets = [ipaddress.ip_interface(f"{a['local']}/{a['prefixlen']}").network for i in out for a in i["addr_info"]]
+    lab = [ipaddress.ip_network(n) for n in {{ lab_subnets | to_json }}]
+    bad = [(str(w), str(l)) for w in nets for l in lab if w.overlaps(l)]
+    print("Wi-Fi networks:", [str(n) for n in nets])
+    if not nets:
+        print("Wi-Fi has no IPv4 address"); sys.exit(2)
+    if bad:
+        print("OVERLAP with lab subnets:", bad, "- change the lab subnet in group_vars/all.yml (and kolla/globals.yml)"); sys.exit(1)
+    PY
+  args:
+    executable: /bin/bash
+  register: wifi_overlap
+  changed_when: false

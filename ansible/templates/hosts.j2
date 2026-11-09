@@ -1,0 +1,8 @@
+{% for h in groups['all'] %}
+{{ net.mgmt }}.{{ hostvars[h].host_id }} {{ h }} {{ h }}.{{ lab_domain }}
+{% endfor %}
+{% for h in groups['control'] %}
+{{ net.storage }}.{{ hostvars[h].host_id }} {{ h }}-st
+{% endfor %}
+{{ internal_vip }} api.{{ lab_domain }}
+{{ external_vip }} public.{{ lab_domain }}

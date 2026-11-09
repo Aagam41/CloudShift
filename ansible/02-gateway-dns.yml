@@ -1,0 +1,150 @@
+---
+# Internet gateway (floating address, VRRP) on every controller that has Wi-Fi, and lab DNS on every controller.
+#   ansible-playbook 02-gateway-dns.yml -K
+- name: Gateway controllers - Wi-Fi uplink, NAT, floating gateway address
+  hosts: gateway
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/check_wifi.yml
+
+    - name: Packages
+      ansible.builtin.apt:
+        name: [iptables, keepalived, iputils-arping, chrony, bind9-dnsutils]
+        update_cache: true
+
+    - name: Stock keepalived service stays off (we run our own instance; Kolla has its own container)
+      ansible.builtin.systemd:
+        name: keepalived
+        enabled: false
+        state: stopped
+        masked: true
+
+    - name: IP forwarding (persistent)
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-lab-gateway.conf
+        content: "net.ipv4.ip_forward=1\n"
+        mode: "0644"
+      register: sysctl
+
+    - name: Load sysctl
+      ansible.builtin.command: sysctl --system
+      when: sysctl.changed
+
+    - name: Scripts
+      ansible.builtin.template:
+        src: "{{ item.src }}.j2"
+        dest: "/usr/local/sbin/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop:
+        - {src: lab-gateway.sh,      dest: lab-gateway.sh}
+        - {src: gw-check.sh,         dest: gw-check.sh}
+        - {src: gw-notify.sh,        dest: gw-notify.sh}
+        - {src: provider-gateway.sh, dest: provider-gateway.sh}
+
+    - name: systemd units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop: [lab-gateway.service, provider-gateway.service, lab-keepalived.service]
+
+    - name: keepalived config directory
+      ansible.builtin.file:
+        path: /etc/keepalived
+        state: directory
+        mode: "0755"
+
+    - name: keepalived config
+      ansible.builtin.template:
+        src: keepalived-gateway.conf.j2
+        dest: /etc/keepalived/lab-gateway.conf
+        owner: root
+        group: root
+        mode: "0600"
+      register: kconf
+
+    - name: keepalived accepts the config
+      ansible.builtin.command: keepalived --config-test -f /etc/keepalived/lab-gateway.conf
+      changed_when: false
+
+    - name: NAT rules and the provider-gateway reconciler
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      loop: [lab-gateway, provider-gateway]
+
+    - name: Floating gateway (VRRP)
+      ansible.builtin.systemd:
+        name: lab-keepalived
+        enabled: true
+        state: "{{ 'restarted' if kconf.changed else 'started' }}"
+        daemon_reload: true
+
+- name: Other nodes - packages through the gateway
+  hosts: all:!gateway
+  become: true
+  tasks:
+    - name: Wait for Internet through the floating gateway
+      ansible.builtin.command: ping -c 2 -W 3 1.1.1.1
+      register: net
+      until: net.rc == 0
+      retries: 15
+      delay: 3
+      changed_when: false
+
+    - name: Packages
+      ansible.builtin.apt:
+        name: [chrony, bind9-dnsutils]
+        update_cache: true
+
+- name: Lab DNS on every controller
+  hosts: control
+  become: true
+  handlers:
+    - name: restart dnsmasq
+      ansible.builtin.systemd:
+        name: dnsmasq
+        state: restarted
+  tasks:
+    # Config first, package second: the package must never start with its default config
+    # (that would fight systemd-resolved for port 53).
+    - name: dnsmasq config directory
+      ansible.builtin.file:
+        path: /etc/dnsmasq.d
+        state: directory
+        mode: "0755"
+
+    - name: dnsmasq config
+      ansible.builtin.template:
+        src: dnsmasq.conf.j2
+        dest: /etc/dnsmasq.d/cloud03.conf
+        mode: "0644"
+      notify: restart dnsmasq
+
+    - name: dnsmasq
+      ansible.builtin.apt:
+        name: dnsmasq
+        update_cache: true
+
+    - name: dnsmasq enabled and running
+      ansible.builtin.systemd:
+        name: dnsmasq
+        enabled: true
+        state: started
+
+    - name: Apply config changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: This controller's DNS answers locally and upstream
+      ansible.builtin.shell: |
+        dig +short @{{ net.dns }}.{{ host_id }} api.{{ lab_domain }} | grep -q '{{ internal_vip }}' &&
+        dig +short @{{ net.dns }}.{{ host_id }} ubuntu.com | grep -q .
+      register: dnscheck
+      until: dnscheck.rc == 0
+      retries: 5
+      delay: 2
+      changed_when: false

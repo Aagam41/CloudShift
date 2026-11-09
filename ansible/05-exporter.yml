@@ -1,0 +1,62 @@
+---
+# Run AFTER kolla/deploy.sh. Installs the cloud-exporter on all three controllers (each Prometheus scrapes its own).
+#   ansible-playbook 05-exporter.yml -K
+- name: cloud-exporter on every controller
+  hosts: control
+  become: true
+  tasks:
+    - name: Python venv support
+      ansible.builtin.apt:
+        name: python3-venv
+
+    - name: Directory
+      ansible.builtin.file:
+        path: /opt/cloud-exporter
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0750"
+
+    - name: OpenStack credentials (admin clouds.yaml written by kolla-ansible post-deploy)
+      ansible.builtin.copy:
+        src: /etc/kolla/clouds.yaml
+        dest: /opt/cloud-exporter/clouds.yaml
+        owner: "{{ ansible_user }}"
+        mode: "0600"
+
+    - name: Exporter script
+      ansible.builtin.copy:
+        src: ../monitoring/cloud_exporter.py
+        dest: /opt/cloud-exporter/cloud_exporter.py
+        owner: "{{ ansible_user }}"
+        mode: "0755"
+      register: script
+
+    - name: openstacksdk in its own venv
+      ansible.builtin.pip:
+        name: openstacksdk
+        virtualenv: /opt/cloud-exporter/venv
+        virtualenv_command: python3 -m venv
+      become_user: "{{ ansible_user }}"
+
+    - name: systemd unit
+      ansible.builtin.template:
+        src: cloud-exporter.service.j2
+        dest: /etc/systemd/system/cloud-exporter.service
+        mode: "0644"
+      register: unit
+
+    - name: Start
+      ansible.builtin.systemd:
+        name: cloud-exporter
+        enabled: true
+        state: "{{ 'restarted' if (script.changed or unit.changed) else 'started' }}"
+        daemon_reload: true
+
+    - name: Serving metrics
+      ansible.builtin.uri:
+        url: "http://{{ net.mgmt }}.{{ host_id }}:9199/metrics"
+        return_content: true
+      register: metrics
+      until: metrics.status == 200 and 'cloud_exporter_errors_total' in metrics.content
+      retries: 12
+      delay: 5

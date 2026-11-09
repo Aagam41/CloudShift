@@ -1,0 +1,61 @@
+---
+# Read-only checks. Run first:   ansible-playbook 00-preflight.yml -K
+- name: Preflight on every node (changes nothing)
+  hosts: all
+  become: true
+  tasks:
+    - name: Hostname must equal the inventory name
+      ansible.builtin.assert:
+        that: ansible_hostname == inventory_hostname
+        fail_msg: "hostname is '{{ ansible_hostname }}' but inventory expects '{{ inventory_hostname }}' -> sudo hostnamectl set-hostname {{ inventory_hostname }}"
+        quiet: true
+
+    - name: NIC exists
+      ansible.builtin.assert:
+        that: nic in ansible_interfaces
+        fail_msg: "NIC '{{ nic }}' not found. Interfaces: {{ ansible_interfaces }}. Fix 'nic' in inventory.yml"
+        quiet: true
+
+    - name: Existing netplan defines the NIC under that same name (our VLANs attach to it)
+      ansible.builtin.shell: grep -rEq '^\s+{{ nic }}:' /etc/netplan/
+      changed_when: false
+
+    - name: Current default routes
+      ansible.builtin.command: ip -4 route show default
+      register: defroutes
+      changed_when: false
+
+    - name: Firewall state
+      ansible.builtin.command: ufw status
+      register: ufw
+      changed_when: false
+      failed_when: false
+
+    - name: Virtualisation flags (compute nodes need VT-x/AMD-V)
+      ansible.builtin.shell: grep -Ec 'vmx|svm' /proc/cpuinfo
+      register: virt
+      changed_when: false
+      failed_when: virt.stdout | int == 0
+      when: inventory_hostname in groups['compute']
+
+    - name: Summary
+      ansible.builtin.debug:
+        msg:
+          - "cpu: {{ ansible_processor[2] | default('?') }} x{{ ansible_processor_vcpus }}  ram: {{ ansible_memtotal_mb }} MB"
+          - "root free: {{ (ansible_mounts | selectattr('mount','equalto','/') | first).size_available // 1073741824 }} GB"
+          - "default routes: {{ defroutes.stdout | default('none') }}"
+          - "ufw: {{ ufw.stdout_lines[0] | default('not installed') }}"
+
+- name: Gateway checks (Wi-Fi uplink of each gateway controller)
+  hosts: gateway
+  become: true
+  tasks:
+    - ansible.builtin.include_tasks: tasks/check_wifi.yml
+    - ansible.builtin.debug:
+        msg: "{{ wifi_overlap.stdout_lines }}"
+    - name: Redundancy of the Internet uplink
+      ansible.builtin.debug:
+        msg: >-
+          {{ groups['gateway'] | length }} controller(s) have an uplink.
+          {{ 'Only one: Internet stops if it fails (everything else keeps working). See docs/HA.md.' if groups['gateway'] | length == 1 else 'The gateway fails over between them.' }}
+      run_once: true

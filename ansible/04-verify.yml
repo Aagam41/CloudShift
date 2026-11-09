@@ -1,0 +1,93 @@
+---
+# Read-only connectivity and storage check after 01-03. Fails loudly on the first problem.
+- name: Verify the lab
+  hosts: all
+  become: true
+  vars:
+    c1: "{{ groups['control'][0] }}"
+  tasks:
+    - name: Reach the first controller on every VLAN
+      ansible.builtin.command: ping -c 2 -W 2 -I {{ item.iface }} {{ item.ip }}
+      loop:
+        - {iface: mgmt,    ip: "{{ net.mgmt }}.{{ hostvars[c1].host_id }}"}
+        - {iface: storage, ip: "{{ net.storage }}.{{ hostvars[c1].host_id }}"}
+        - {iface: tunnel,  ip: "{{ net.tunnel }}.{{ hostvars[c1].host_id }}"}
+        - {iface: dns,     ip: "{{ net.dns }}.{{ hostvars[c1].host_id }}"}
+        - {iface: egress,  ip: "{{ net.egress }}.{{ hostvars[c1].host_id }}"}
+      changed_when: false
+      when: inventory_hostname != c1
+
+    - name: Controllers reach each other on the API VLAN (the external VIP lives here)
+      ansible.builtin.command: ping -c 2 -W 2 -I api {{ net.api }}.{{ hostvars[item].host_id }}
+      loop: "{{ groups['control'] }}"
+      changed_when: false
+      when: inventory_hostname in groups['control'] and item != inventory_hostname
+
+    - name: Names resolve (/etc/hosts)
+      ansible.builtin.command: getent hosts {{ item }}
+      loop: "{{ groups['all'] }}"
+      changed_when: false
+
+    - name: Every DNS server answers
+      ansible.builtin.shell: dig +short +time=2 +tries=1 @{{ item }} cloud03-compute01 | grep -q .
+      loop: "{{ dns_servers }}"
+      changed_when: false
+
+    - name: Internet (IP)
+      ansible.builtin.command: ping -c 2 -W 3 1.1.1.1
+      changed_when: false
+
+    - name: Internet (DNS)
+      ansible.builtin.command: getent hosts ubuntu.com
+      changed_when: false
+
+    - name: Compute nodes have /dev/kvm
+      ansible.builtin.stat:
+        path: /dev/kvm
+      register: kvm
+      failed_when: not kvm.stat.exists
+      when: inventory_hostname in groups['compute']
+
+    - name: Shared volumes are mounted as GlusterFS where needed
+      ansible.builtin.shell: findmnt -n -o FSTYPE {{ item.value.mount }} | grep -q glusterfs
+      loop: "{{ gluster_volumes | dict2items | selectattr('value.clients', 'in', group_names) | list }}"
+      changed_when: false
+
+- name: Gateway - exactly one controller holds the floating address
+  hosts: gateway
+  become: true
+  tasks:
+    - name: Does this node hold it?
+      ansible.builtin.shell: ip -4 -o addr show dev egress | grep -c ' {{ gateway_egress_ip }}/' || true
+      register: has_vip
+      changed_when: false
+
+    - name: Exactly one holder
+      ansible.builtin.assert:
+        that: groups['gateway'] | map('extract', hostvars, ['has_vip', 'stdout']) | map('int') | sum == 1
+        fail_msg: "The floating gateway {{ gateway_egress_ip }} must be on exactly one controller. Check: systemctl status lab-keepalived, journalctl -u lab-keepalived"
+        success_msg: "{{ gateway_egress_ip }} is held by {{ groups['gateway'] | select('extract', hostvars, ['has_vip', 'stdout']) | map('extract', hostvars) | selectattr('has_vip.stdout', 'equalto', '1') | map(attribute='inventory_hostname') | first }}"
+      run_once: true
+
+- name: Storage replicated on all three controllers
+  hosts: control
+  become: true
+  tasks:
+    - name: Volumes started and healthy
+      ansible.builtin.shell: |
+        gluster volume info | grep -c 'Status: Started' | grep -qx {{ gluster_volumes | length }} &&
+        test "$(gluster peer status | grep -c 'Peer in Cluster (Connected)')" -eq {{ groups['control'] | length - 1 }}
+      run_once: true
+      changed_when: false
+
+    - name: Test files from every compute node are on this controller's brick (so a copy exists here)
+      ansible.builtin.stat:
+        path: "{{ gluster_brick_root }}/nova/brick/.mounttest-{{ item }}"
+      loop: "{{ groups['compute'] }}"
+      register: seen
+      failed_when: not seen.results | map(attribute='stat.exists') | list | min
+
+    - name: All good
+      ansible.builtin.debug:
+        msg: "Network, DNS, floating gateway and 3-way replicated storage are ready. Next: kolla/install.sh"
+      run_once: true

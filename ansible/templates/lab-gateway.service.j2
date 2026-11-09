@@ -1,0 +1,12 @@
+[Unit]
+Description=Lab Internet gateway rules (NAT via Wi-Fi)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/lab-gateway.sh
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,33 @@
+# Managed by Ansible - lab DNS, runs on every controller
+# Listens on this controller's VLAN 70 address, plus the two floating gateway addresses
+# (only the current gateway master actually holds those, bind-dynamic copes with them coming and going).
+bind-dynamic
+listen-address={{ net.dns }}.{{ host_id }}
+listen-address={{ gateway_egress_ip }}
+listen-address={{ provider_gateway }}
+
+domain={{ lab_domain }}
+local=/{{ lab_domain }}/
+domain-needed
+bogus-priv
+cache-size=1000
+
+# Upstream resolvers
+{% if inventory_hostname in groups['gateway'] %}
+resolv-file=/run/systemd/resolve/resolv.conf
+{% else %}
+no-resolv
+{% endif %}
+{% for s in upstream_dns %}
+server={{ s }}
+{% endfor %}
+
+# Cluster hosts (management VLAN), the storage-VLAN names of the controllers, and the two API VIPs
+{% for h in groups['all'] %}
+host-record={{ h }},{{ h }}.{{ lab_domain }},{{ net.mgmt }}.{{ hostvars[h].host_id }}
+{% endfor %}
+{% for h in groups['control'] %}
+host-record={{ h }}-st,{{ net.storage }}.{{ hostvars[h].host_id }}
+{% endfor %}
+host-record=api.{{ lab_domain }},{{ internal_vip }}
+host-record=public.{{ lab_domain }},{{ external_vip }}

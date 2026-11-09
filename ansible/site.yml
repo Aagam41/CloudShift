@@ -1,0 +1,5 @@
+---
+- import_playbook: 01-network.yml
+- import_playbook: 02-gateway-dns.yml
+- import_playbook: 03-storage.yml
+- import_playbook: 04-verify.yml

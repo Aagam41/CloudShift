@@ -1,0 +1,13 @@
+cloud: kolla-admin
+prometheus_url: http://10.0.10.100:9091      # internal VIP, Kolla's Prometheus (basic auth, see scheduler.py)
+hosts:                                       # nova host name -> management IP (the Prometheus "instance" label)
+  cloud03-contorlcompute: 10.0.10.13
+  cloud03-compute01: 10.0.10.21
+  cloud03-compute02: 10.0.10.22
+  cloud03-compute03: 10.0.10.23
+  cloud03-compute04: 10.0.10.24
+  cloud03-compute05: 10.0.10.25
+threshold: 20        # act when busiest host has this many more CPU % than the idlest
+interval: 60         # seconds between checks
+cooldown: 300        # seconds to wait after a migration
+dry_run: true        # true = only log decisions

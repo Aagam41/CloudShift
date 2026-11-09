@@ -1,0 +1,7 @@
+# Extra scrape job for the Prometheus on cloud03-contorlcompute: it scrapes only the cloud-exporter on the same controller,
+# so the three Prometheus servers never see duplicate series. (Kolla reads <hostname>/prometheus.yml.d.)
+scrape_configs:
+  - job_name: cloud_exporter
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['10.0.10.13:9199']

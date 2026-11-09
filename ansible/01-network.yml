@@ -1,0 +1,75 @@
+---
+# VLAN interfaces, hostnames, /etc/hosts, sudo. One node at a time.
+# (No packages here: the other nodes only get Internet once 02-gateway-dns.yml has run.)
+#   ansible-playbook 01-network.yml -K
+# Needs the switch VLANs (switch/switch-vlans.md) configured first.
+- name: Network on every node
+  hosts: all
+  serial: 1
+  become: true
+  tasks:
+    - name: Hostname
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
+    - name: NIC is defined in the existing netplan under the same name
+      ansible.builtin.shell: grep -rEq '^\s+{{ nic }}:' /etc/netplan/
+      changed_when: false
+
+    - name: Current default routes
+      ansible.builtin.command: ip -4 route show default
+      register: defroutes
+      changed_when: false
+
+    - name: Refuse to create a second default route
+      ansible.builtin.assert:
+        that: defroutes.stdout == '' or gateway_egress_ip in defroutes.stdout or (allow_other_default | default(false) | bool)
+        fail_msg: >-
+          This node already has a default route ({{ defroutes.stdout }}). Remove it from the existing netplan
+          file (the lab default route goes via {{ gateway_egress_ip }}) or re-run with -e allow_other_default=true
+      when: inventory_hostname not in groups['gateway']
+
+    - name: Passwordless sudo for Kolla-Ansible
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/90-kolla-ansible
+        content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        mode: "0440"
+        validate: visudo -cf %s
+
+    - name: Remove the 127.0.1.1 hostname alias (cluster names must resolve to real IPs)
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.1\.1\s'
+        state: absent
+
+    - name: Cluster names in /etc/hosts
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} cloud03 lab"
+        block: "{{ lookup('ansible.builtin.template', 'hosts.j2') }}"
+
+    - name: VLAN netplan file
+      ansible.builtin.template:
+        src: netplan.yaml.j2
+        dest: /etc/netplan/60-cloud03-vlans.yaml
+        mode: "0600"
+      register: netplan
+
+    - name: Validate netplan
+      ansible.builtin.command: netplan generate
+      when: netplan.changed
+
+    - name: Apply netplan
+      ansible.builtin.command: netplan apply
+      when: netplan.changed
+
+    - name: Wait for the node
+      ansible.builtin.wait_for_connection:
+        delay: 3
+        timeout: 120
+      when: netplan.changed
+
+    - name: All VLAN interfaces are up
+      ansible.builtin.command: ip -br link show {{ item }}
+      loop: "{{ ['mgmt','storage','tunnel','egress','provider','dns'] + (['api'] if inventory_hostname in groups['control'] else []) }}"
+      changed_when: false

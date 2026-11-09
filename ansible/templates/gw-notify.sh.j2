@@ -1,0 +1,4 @@
+#!/bin/bash
+# keepalived calls this on every state change: remember the state, then apply it to br-ex.
+echo "$1" > /run/lab-gateway-state
+/usr/local/sbin/provider-gateway.sh once

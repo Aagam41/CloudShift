@@ -1,0 +1,16 @@
+---
+# What Ceilometer measures (used for billing). 300 s matches Gnocchi's default 5-minute granularity.
+# Live load balancing does NOT use this: it uses Prometheus (15 s).
+sources:
+  - name: billing_pollsters
+    interval: 300
+    meters:
+      - cpu
+      - memory.usage
+      - network.incoming.bytes
+      - network.outgoing.bytes
+      - disk.ephemeral.size
+      - disk.root.size
+      - volume.size
+      - image.size
+      - ip.floating

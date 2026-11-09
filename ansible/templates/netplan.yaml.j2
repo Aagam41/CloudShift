@@ -1,0 +1,43 @@
+# Managed by Ansible. Adds VLAN interfaces on top of the NIC already defined in your
+# existing netplan file (the 192.168.0.x address stays there, untouched).
+network:
+  version: 2
+  vlans:
+    mgmt:
+      id: {{ vlan.mgmt }}
+      link: {{ nic }}
+      addresses: [{{ net.mgmt }}.{{ host_id }}/24]
+    storage:
+      id: {{ vlan.storage }}
+      link: {{ nic }}
+      addresses: [{{ net.storage }}.{{ host_id }}/24]
+    tunnel:
+      id: {{ vlan.tunnel }}
+      link: {{ nic }}
+      addresses: [{{ net.tunnel }}.{{ host_id }}/24]
+{% if inventory_hostname in groups['control'] %}
+    api:
+      id: {{ vlan.api }}
+      link: {{ nic }}
+      addresses: [{{ net.api }}.{{ host_id }}/24]
+{% endif %}
+    egress:
+      id: {{ vlan.egress }}
+      link: {{ nic }}
+      addresses: [{{ net.egress }}.{{ host_id }}/24]
+{% if inventory_hostname not in groups['gateway'] %}
+      routes:
+        - to: default
+          via: {{ gateway_egress_ip }}      # the floating gateway address
+      nameservers:
+        search: [{{ lab_domain }}]
+        addresses: [{{ (dns_servers + [upstream_dns[0]]) | join(', ') }}]
+{% endif %}
+    provider:                      # Neutron external interface: must be UP and must NOT have an IP
+      id: {{ vlan.provider }}
+      link: {{ nic }}
+      link-local: []
+    dns:
+      id: {{ vlan.dns }}
+      link: {{ nic }}
+      addresses: [{{ net.dns }}.{{ host_id }}/24]

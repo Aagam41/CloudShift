@@ -1,0 +1,46 @@
+---
+# What CloudKitty bills, collected from Gnocchi. A cost applies per collection period (1 h by default),
+# so "0.02 for m1.small" means 0.02 per instance-hour.
+metrics:
+  cpu:                        # one unit per hour while the instance exists, priced by flavor
+    unit: instance
+    alt_name: instance
+    groupby: [id, project_id]
+    metadata: [flavor_name, flavor_id, vcpus]
+    mutate: NUMBOOL
+    extra_args:
+      aggregation_method: mean
+      resource_type: instance
+
+  volume.size:                # GiB-hours of volumes
+    unit: GiB
+    groupby: [id, project_id]
+    metadata: [volume_type]
+    extra_args:
+      aggregation_method: mean
+      resource_type: volume
+
+  image.size:                 # MiB-hours of images
+    unit: MiB
+    factor: 1/1048576
+    groupby: [id, project_id]
+    metadata: [container_format, disk_format]
+    extra_args:
+      aggregation_method: mean
+      resource_type: image
+
+  ip.floating:                # floating-IP-hours
+    unit: ip
+    groupby: [id, project_id]
+    mutate: NUMBOOL
+    extra_args:
+      aggregation_method: mean
+      resource_type: network
+
+  network.outgoing.bytes:     # MB leaving the VMs
+    unit: MB
+    factor: 1/1000000
+    groupby: [id, project_id]
+    extra_args:
+      aggregation_method: max
+      resource_type: instance_network_interface

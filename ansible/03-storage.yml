@@ -1,0 +1,200 @@
+---
+# Shared storage with NO single point of failure: GlusterFS, one copy on each controller.
+#   nova    -> VM disks (live migration)        mounted on every compute node
+#   glance  -> images                           mounted on the 3 controllers
+#   gnocchi -> telemetry data                   mounted on the 3 controllers
+# Nothing here formats or partitions a disk. Bricks are plain directories under gluster_brick_root;
+# mount a data disk there BEFORE running this if you do not want them on the root filesystem.
+#   ansible-playbook 03-storage.yml -K
+
+- name: GlusterFS servers (the 3 controllers)
+  hosts: control
+  become: true
+  tasks:
+    - name: Packages
+      ansible.builtin.apt:
+        name: [glusterfs-server, glusterfs-client]
+        update_cache: true
+
+    - name: glusterd
+      ansible.builtin.systemd:
+        name: glusterd
+        enabled: true
+        state: started
+
+    - name: Brick directories
+      ansible.builtin.file:
+        path: "{{ gluster_brick_root }}/{{ item }}/brick"
+        state: directory
+        mode: "0755"
+      loop: "{{ gluster_volumes.keys() | list }}"
+
+    - name: Filesystem under the bricks
+      ansible.builtin.command: findmnt -n -o TARGET,SOURCE,AVAIL --target {{ gluster_brick_root }}
+      register: backing
+      changed_when: false
+
+    - name: Where the VM disks will live
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ backing.stdout }}   (TARGET '/' = the root filesystem; every volume is stored 3 times)"
+
+    - name: Refuse the root filesystem if a dedicated disk is required
+      ansible.builtin.assert:
+        that: not (gluster_require_dedicated_disk | bool) or backing.stdout.split()[0] != '/'
+        fail_msg: "{{ gluster_brick_root }} is on the root filesystem. Mount a data disk there first."
+        quiet: true
+
+- name: Create the Gluster cluster and volumes (once, from the first controller)
+  hosts: control
+  become: true
+  run_once: true
+  tasks:
+    - name: Peer probe the other controllers (storage VLAN names)
+      ansible.builtin.command: gluster --mode=script peer probe {{ item }}-st
+      loop: "{{ groups['control'][1:] }}"
+      register: probe
+      changed_when: "'already' not in probe.stdout"
+
+    - name: Probe the first controller by NAME from the second (peers otherwise know it only by IP)
+      ansible.builtin.command: gluster --mode=script peer probe {{ groups['control'][0] }}-st
+      delegate_to: "{{ groups['control'][1] }}"
+      register: probe2
+      changed_when: "'already' not in probe2.stdout"
+
+    - name: Wait until all peers are connected
+      ansible.builtin.shell: test "$(gluster peer status | grep -c 'Peer in Cluster (Connected)')" -eq {{ groups['control'] | length - 1 }}
+      register: peers
+      until: peers.rc == 0
+      retries: 15
+      delay: 4
+      changed_when: false
+
+    - name: Which volumes exist already?
+      ansible.builtin.command: gluster volume info {{ item.key }}
+      loop: "{{ gluster_volumes | dict2items }}"
+      register: existing
+      failed_when: false
+      changed_when: false
+
+    - name: Create missing volumes (3 copies, or 2 copies + arbiter)
+      ansible.builtin.command: >-
+        gluster --mode=script volume create {{ item.item.key }} replica 3 {{ 'arbiter 1' if gluster_arbiter else '' }}
+        {% for h in groups['control'] %}{{ h }}-st:{{ gluster_brick_root }}/{{ item.item.key }}/brick {% endfor %}force
+      loop: "{{ existing.results }}"
+      when: item.rc != 0
+
+    - name: Quorum options (a minority of controllers can never accept writes -> no split brain)
+      ansible.builtin.command: gluster volume set {{ item.0.key }} {{ item.1 }}
+      loop: "{{ gluster_volumes | dict2items | product(['cluster.quorum-type auto', 'cluster.server-quorum-type server']) | list }}"
+      changed_when: false
+
+    - name: Does this Gluster version ship the "virt" tuning group?
+      ansible.builtin.stat:
+        path: /var/lib/glusterd/groups/virt
+      register: virtgroup
+
+    - name: VM-image tuning (O_DIRECT, no read-ahead caching, sharding)
+      ansible.builtin.command: gluster volume set {{ item.key }} group virt
+      loop: "{{ gluster_volumes | dict2items | selectattr('value.virt', 'defined') | list }}"
+      when: virtgroup.stat.exists
+      changed_when: false
+
+    - name: Same tuning by hand if the group file is missing
+      ansible.builtin.command: gluster volume set {{ item.0.key }} {{ item.1 }}
+      loop: "{{ gluster_volumes | dict2items | selectattr('value.virt', 'defined') | list | product(['performance.strict-o-direct on', 'network.remote-dio disable', 'performance.quick-read off', 'performance.read-ahead off', 'performance.io-cache off']) | list }}"
+      when: not virtgroup.stat.exists
+      changed_when: false
+
+    - name: Which volumes are started?
+      ansible.builtin.shell: "gluster volume info {{ item.key }} | grep -q 'Status: Started'"
+      loop: "{{ gluster_volumes | dict2items }}"
+      register: started
+      failed_when: false
+      changed_when: false
+
+    - name: Start volumes
+      ansible.builtin.command: gluster --mode=script volume start {{ item.item.key }}
+      loop: "{{ started.results }}"
+      when: item.rc != 0
+
+- name: Mount the volumes where they are needed
+  hosts: all
+  become: true
+  vars:
+    mounts: "{{ gluster_volumes | dict2items | selectattr('value.clients', 'in', group_names) | list }}"
+    gluster_first: "{{ groups['control'][0] }}-st"
+    gluster_backups: "{{ groups['control'][1:] | map('regex_replace', '$', '-st') | join(':') }}"
+  tasks:
+    - name: Gluster client
+      ansible.builtin.apt:
+        name: glusterfs-client
+      when: mounts | length > 0
+
+    - name: Already mounted?
+      ansible.builtin.command: findmnt -n {{ item.value.mount }}
+      loop: "{{ mounts }}"
+      register: mounted
+      failed_when: false
+      changed_when: false
+
+    - name: Mount point directories
+      ansible.builtin.file:
+        path: "{{ item.item.value.mount }}"
+        state: directory
+      loop: "{{ mounted.results }}"
+      when: item.rc != 0
+
+    - name: Make unmounted mount points immutable, so a missing mount makes services fail loudly instead of writing locally
+      ansible.builtin.file:
+        path: "{{ item.item.value.mount }}"
+        attributes: "+i"
+      loop: "{{ mounted.results }}"
+      when: item.rc != 0
+
+    - name: fstab entries
+      ansible.builtin.lineinfile:
+        path: /etc/fstab
+        regexp: '\s{{ item.value.mount }}\s'
+        line: >-
+          {{ gluster_first }}:/{{ item.key }} {{ item.value.mount }} glusterfs
+          defaults,_netdev,backup-volfile-servers={{ gluster_backups }},x-systemd.mount-timeout=60{{ ',x-systemd.requires=glusterd.service' if inventory_hostname in groups['control'] else '' }} 0 0
+      loop: "{{ mounts }}"
+
+    - name: docker.service.d directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/docker.service.d
+        state: directory
+        mode: "0755"
+      when: mounts | length > 0
+
+    - name: Docker (and so every OpenStack container) waits for these mounts
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/docker.service.d/10-shared-storage.conf
+        content: |
+          [Unit]
+          RequiresMountsFor={{ mounts | map(attribute='value.mount') | join(' ') }}
+        mode: "0644"
+      when: mounts | length > 0
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: mounts | length > 0
+
+    - name: Mount
+      ansible.builtin.command: mount {{ item.item.value.mount }}
+      loop: "{{ mounted.results }}"
+      when: item.rc != 0
+
+    - name: Volume root is writable by the service containers (their uids differ per service)
+      ansible.builtin.file:
+        path: "{{ item.value.mount }}"
+        mode: "0777"
+      loop: "{{ mounts }}"
+
+    - name: Write test on the VM-disk volume
+      ansible.builtin.file:
+        path: "{{ gluster_volumes.nova.mount }}/.mounttest-{{ inventory_hostname }}"
+        state: touch
+        mode: "0644"
+      when: "'compute' in group_names"

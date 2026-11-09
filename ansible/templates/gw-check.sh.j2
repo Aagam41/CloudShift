@@ -1,0 +1,4 @@
+#!/bin/bash
+# keepalived health check: does this controller's Wi-Fi really reach the Internet?
+ip -4 route show default dev {{ wifi_if }} | grep -q . || exit 1
+ping -c 1 -W 2 -I {{ wifi_if }} 1.1.1.1 >/dev/null 2>&1 || ping -c 1 -W 2 -I {{ wifi_if }} 8.8.8.8 >/dev/null 2>&1

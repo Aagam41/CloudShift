@@ -1,0 +1,13 @@
+[Unit]
+Description=cloud-exporter (Prometheus metrics: VMs, projects, migrations, billing)
+After=network-online.target
+
+[Service]
+User={{ ansible_user }}
+Environment=OS_CLOUD=kolla-admin OS_CLIENT_CONFIG_FILE=/opt/cloud-exporter/clouds.yaml BIND={{ net.mgmt }}.{{ host_id }} PORT=9199
+ExecStart=/opt/cloud-exporter/venv/bin/python /opt/cloud-exporter/cloud_exporter.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

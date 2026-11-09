@@ -1,0 +1,46 @@
+# Managed by Ansible. Floating Internet gateway for the lab (separate from Kolla's keepalived container).
+# The controller with the highest healthy priority holds {{ gateway_egress_ip }} on VLAN 50; its
+# notify script also puts {{ provider_gateway }} on br-ex (the VM floating-IP network gateway).
+global_defs {
+    router_id {{ inventory_hostname }}
+    enable_script_security
+    script_user root
+}
+
+vrrp_script chk_uplink {
+    script "/usr/local/sbin/gw-check.sh"
+    interval 5
+    timeout 4
+    fall 2
+    rise 2
+    weight -60            # a node whose Wi-Fi has no Internet loses 60 priority and hands the gateway over
+}
+
+vrrp_instance LAB_GATEWAY {
+    state BACKUP
+    interface egress
+    virtual_router_id {{ gateway_vrid }}
+    priority {{ gw_priority }}
+    advert_int 1
+    authentication {
+        auth_type PASS
+        auth_pass {{ gateway_vrrp_password }}
+    }
+{% if groups['gateway'] | length > 1 %}
+    unicast_src_ip {{ net.egress }}.{{ host_id }}
+    unicast_peer {
+{% for h in groups['gateway'] if h != inventory_hostname %}
+        {{ net.egress }}.{{ hostvars[h].host_id }}
+{% endfor %}
+    }
+{% endif %}
+    virtual_ipaddress {
+        {{ gateway_egress_ip }}/24 dev egress
+    }
+    track_script {
+        chk_uplink
+    }
+    notify_master "/usr/local/sbin/gw-notify.sh MASTER"
+    notify_backup "/usr/local/sbin/gw-notify.sh BACKUP"
+    notify_fault  "/usr/local/sbin/gw-notify.sh FAULT"
+}
