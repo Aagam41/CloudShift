@@ -1,7 +1,6 @@
 # Single source of truth for the node list. Edit the lines marked CHANGE.
 all:
   vars:
-    admin_user: ubuntu
     ansible_user: ansible
     ansible_become: true
   children:

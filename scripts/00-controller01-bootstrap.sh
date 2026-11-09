@@ -28,7 +28,7 @@ ansible-inventory -i "$INVENTORY" --list | python3 -c '
 import json, sys
 inv = json.load(sys.stdin)["_meta"]["hostvars"]
 for h, v in inv.items():
-    print(v["admin_user"] + "@" + v["ansible_host"])
+    print("ubuntu@" + v["ansible_host"])
 ' | sort -u | while read -r target; do
 
     echo "== $target"
@@ -41,7 +41,7 @@ echo " Creating ansible user on all nodes"
 echo "======================================"
 
 # Run user creation playbook with sudo password prompt
-ansible-playbook -i "$INVENTORY" "$PLAYBOOK" -K
+ansible-playbook -i "$INVENTORY" -e "ansible_user=ubuntu" --private-key ~/.ssh/id_ed25519 "$PLAYBOOK" -K
 
 echo ""
 echo "======================================"
