@@ -28,20 +28,12 @@ ansible-inventory -i "$INVENTORY" --list | python3 -c '
 import json, sys
 inv = json.load(sys.stdin)["_meta"]["hostvars"]
 for h, v in inv.items():
-    print(v["ansible_user"] + "@" + v["ansible_host"])
+    print(v["admin_user"] + "@" + v["ansible_host"])
 ' | sort -u | while read -r target; do
 
     echo "== $target"
     ssh-copy-id -o StrictHostKeyChecking=accept-new "$target"
-
 done
-
-echo ""
-echo "======================================"
-echo " Checking Ansible connectivity"
-echo "======================================"
-
-ansible all -i "$INVENTORY" -m ping
 
 echo ""
 echo "======================================"
@@ -56,22 +48,14 @@ echo "======================================"
 echo " Testing ansible user connectivity"
 echo "======================================"
 
-ansible all -i "$INVENTORY" \
-    -u ansible \
-    --private-key ~/.ssh/id_ed25519 \
-    -m ping
+ansible all -i "$INVENTORY" --private-key ~/.ssh/id_ed25519 -m ping
 
 echo ""
 echo "======================================"
 echo " Testing passwordless sudo"
 echo "======================================"
 
-ansible all -i "$INVENTORY" \
-    -u ansible \
-    --private-key ~/.ssh/id_ed25519 \
-    -m command \
-    -a "whoami" \
-    -b
+ansible all -i "$INVENTORY" --private-key ~/.ssh/id_ed25519 -m command -a "whoami" -b
 
 echo ""
 echo "======================================"
