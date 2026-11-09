@@ -16,8 +16,8 @@
         fail_msg: "NIC '{{ nic }}' not found. Interfaces: {{ ansible_interfaces }}. Fix 'nic' in inventory.yml"
         quiet: true
 
-    - name: Existing netplan defines the NIC under that same name (our VLANs attach to it)
-      ansible.builtin.shell: grep -rEq '^\s+{{ nic }}:' /etc/netplan/
+    - name: Check if NIC exists on the server
+      ansible.builtin.shell: ip -br link show {{ nic }}
       changed_when: false
 
     - name: Current default routes
