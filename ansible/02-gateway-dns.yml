@@ -7,9 +7,12 @@
   tasks:
     - ansible.builtin.include_tasks: tasks/check_wifi.yml
 
-    - name: Packages
+    - name: Common packages
+      ansible.builtin.include_tasks: tasks/install_common_packages.yml
+
+    - name: Gateway packages
       ansible.builtin.apt:
-        name: [iptables, keepalived, iputils-arping, chrony, bind9-dnsutils]
+        name: [iptables, keepalived, iputils-arping]
         update_cache: true
 
     - name: Stock keepalived service stays off (we run our own instance; Kolla has its own container)
@@ -96,10 +99,8 @@
       delay: 3
       changed_when: false
 
-    - name: Packages
-      ansible.builtin.apt:
-        name: [chrony, bind9-dnsutils]
-        update_cache: true
+    - name: Common packages
+      ansible.builtin.include_tasks: tasks/install_common_packages.yml
 
 - name: Lab DNS on every controller
   hosts: control

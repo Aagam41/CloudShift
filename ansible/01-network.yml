@@ -12,14 +12,11 @@
       ansible.builtin.hostname:
         name: "{{ inventory_hostname }}"
 
-    - name: NIC is defined in the existing netplan under the same name
-      ansible.builtin.shell: grep -rEq '^\s+{{ nic }}:' /etc/netplan/
-      changed_when: false
+    - name: NIC exists on the node
+      ansible.builtin.include_tasks: tasks/check_nic.yml
 
     - name: Current default routes
-      ansible.builtin.command: ip -4 route show default
-      register: defroutes
-      changed_when: false
+      ansible.builtin.include_tasks: tasks/check_default_route.yml
 
     - name: Refuse to create a second default route
       ansible.builtin.assert:
@@ -47,6 +44,20 @@
         path: /etc/hosts
         marker: "# {mark} cloud03 lab"
         block: "{{ lookup('ansible.builtin.template', 'hosts.j2') }}"
+
+    - name: Find stray netplan files
+      ansible.builtin.find:
+        paths: /etc/netplan
+        patterns: "*.yaml,*.yml"
+        excludes: "01-network-manager-all.yaml"
+      register: stray_netplans
+
+    - name: Remove cloud-init and other stray netplan files
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ stray_netplans.files }}"
+      when: stray_netplans.files | length > 0
 
     - name: VLAN netplan file
       ansible.builtin.template:

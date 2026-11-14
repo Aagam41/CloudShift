@@ -1,0 +1,5 @@
+---
+- name: Common packages
+  ansible.builtin.apt:
+    name: [chrony, bind9-dnsutils]
+    update_cache: true

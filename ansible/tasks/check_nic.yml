@@ -1,0 +1,4 @@
+---
+- name: NIC exists on the node
+  ansible.builtin.command: ip -br link show {{ nic }}
+  changed_when: false

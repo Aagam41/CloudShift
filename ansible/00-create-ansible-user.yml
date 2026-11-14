@@ -1,5 +1,5 @@
 ---
-# Read-only checks. Run first:   ansible-playbook 00-preflight.yml -K
+# Creates the ansible user on all Ubuntu nodes. Run via scripts/00-controller01-bootstrap.sh.
 - name: Create Ansible user on all Ubuntu servers
   hosts: all
   become: yes
