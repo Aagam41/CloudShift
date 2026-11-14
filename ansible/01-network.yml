@@ -17,11 +17,64 @@
     - name: Current default routes
       ansible.builtin.include_tasks: tasks/check_default_route.yml
 
+    - name: Check whether VLAN interfaces already exist
+      ansible.builtin.command: ip -br link show mgmt
+      register: vlan_interfaces
+      failed_when: false
+      changed_when: false
+
+    - name: Remove existing default routes from netplan files
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import glob, yaml
+        for path in glob.glob('/etc/netplan/*.yaml') + glob.glob('/etc/netplan/*.yml'):
+            if path.endswith('01-network-manager-all.yaml') or path.endswith('60-cloud03-vlans.yaml'):
+                continue
+            try:
+                with open(path) as f:
+                    data = yaml.safe_load(f) or {}
+            except Exception:
+                continue
+            net = data.get('network', {}) if isinstance(data, dict) else {}
+            for section in ('ethernets', 'vlans', 'bridges', 'bonds', 'tunnels', 'wifis'):
+                for iface, cfg in (net.get(section) or {}).items():
+                    if not isinstance(cfg, dict):
+                        continue
+                    cfg.pop('gateway4', None)
+                    cfg.pop('gateway6', None)
+                    routes = cfg.get('routes')
+                    if isinstance(routes, list):
+                        routes = [r for r in routes if not (isinstance(r, dict) and r.get('to') in ('default', '0.0.0.0/0', '::/0'))]
+                        if routes:
+                            cfg['routes'] = routes
+                        else:
+                            cfg.pop('routes', None)
+            routes = net.get('routes')
+            if isinstance(routes, list):
+                routes = [r for r in routes if not (isinstance(r, dict) and r.get('to') in ('default', '0.0.0.0/0', '::/0'))]
+                if routes:
+                    net['routes'] = routes
+                else:
+                    net.pop('routes', None)
+            with open(path, 'w') as f:
+                yaml.safe_dump(data, f, sort_keys=False)
+        PY
+      changed_when: false
+
+    - name: Remove active default routes before VLAN setup
+      ansible.builtin.shell: |
+        while ip route del default 2>/dev/null; do :; done
+      when: vlan_interfaces.rc != 0
+      changed_when: false
+
+    - name: Re-check default routes
+      ansible.builtin.include_tasks: tasks/check_default_route.yml
+
     - name: Refuse to create a second default route
       ansible.builtin.assert:
         that: defroutes.stdout == '' or gateway_egress_ip in defroutes.stdout or (allow_other_default | default(false) | bool)
         fail_msg: >-
-          This node already has a default route ({{ defroutes.stdout }}). Remove it from the existing netplan
+          This node still has a default route ({{ defroutes.stdout }}). Remove it from the existing netplan
           file (the lab default route goes via {{ gateway_egress_ip }}) or re-run with -e allow_other_default=true
       when: inventory_hostname not in groups['gateway']
 
@@ -51,12 +104,6 @@
         dest: /etc/netplan/60-cloud03-vlans.yaml
         mode: "0600"
       register: netplan
-
-    - name: Check whether VLAN interfaces already exist
-      ansible.builtin.command: ip -br link show mgmt
-      register: vlan_interfaces
-      failed_when: false
-      changed_when: false
 
     - name: Validate netplan
       ansible.builtin.command: netplan generate
