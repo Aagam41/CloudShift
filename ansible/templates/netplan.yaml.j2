@@ -2,6 +2,9 @@
 # existing netplan file (the 192.168.0.x address stays there, untouched).
 network:
   version: 2
+  ethernets:
+    {{ nic }}:
+      addresses: [192.168.0.{{ host_id }}/24]
   vlans:
     mgmt:
       id: {{ vlan.mgmt }}
