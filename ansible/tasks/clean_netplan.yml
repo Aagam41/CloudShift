@@ -1,0 +1,43 @@
+---
+- name: Clean stray and cloud-init netplan files
+  ansible.builtin.shell: |
+    set -u
+    wifi_if="{{ wifi_if | default('') }}"
+    for f in /etc/netplan/*.yaml /etc/netplan/*.yml; do
+      [ -e "$f" ] || continue
+      b=$(basename "$f")
+      [ "$b" = "01-network-manager-all.yaml" ] && continue
+      [ "$b" = "60-cloud03-vlans.yaml" ] && continue
+      if ! grep -q -- "{{ nic }}" "$f"; then
+        if [ -z "$wifi_if" ] || ! grep -q -- "$wifi_if" "$f"; then
+          rm -f "$f"
+          echo "removed $f"
+        fi
+      fi
+    done
+
+    if [ -f /etc/netplan/50-cloud-init.yaml ]; then
+      nic_elsewhere=0
+      wifi_in_cloudinit=0
+      wifi_elsewhere=0
+      for f in /etc/netplan/*.yaml /etc/netplan/*.yml; do
+        [ -e "$f" ] || continue
+        b=$(basename "$f")
+        [ "$b" = "50-cloud-init.yaml" ] && continue
+        [ "$b" = "01-network-manager-all.yaml" ] && continue
+        [ "$b" = "60-cloud03-vlans.yaml" ] && continue
+        if grep -q -- "{{ nic }}" "$f"; then nic_elsewhere=1; fi
+        if [ -n "$wifi_if" ] && grep -q -- "$wifi_if" "$f"; then wifi_elsewhere=1; fi
+      done
+      if [ -n "$wifi_if" ] && grep -q -- "$wifi_if" /etc/netplan/50-cloud-init.yaml; then
+        wifi_in_cloudinit=1
+      fi
+      if [ "$nic_elsewhere" = "1" ]; then
+        if [ "$wifi_in_cloudinit" = "0" ] || [ "$wifi_elsewhere" = "1" ] || [ -z "$wifi_if" ]; then
+          rm -f /etc/netplan/50-cloud-init.yaml
+          echo "removed /etc/netplan/50-cloud-init.yaml"
+        fi
+      fi
+    fi
+  register: netplan_cleanup
+  changed_when: "'removed' in (netplan_cleanup.stdout | default(''))"

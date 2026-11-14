@@ -1,6 +1,5 @@
 ---
 # VLAN interfaces, hostnames, /etc/hosts, sudo. One node at a time.
-# (No packages here: the other nodes only get Internet once 02-gateway-dns.yml has run.)
 #   ansible-playbook 01-network.yml -K
 # Needs the switch VLANs (switch/switch-vlans.md) configured first.
 - name: Network on every node
@@ -26,14 +25,7 @@
           file (the lab default route goes via {{ gateway_egress_ip }}) or re-run with -e allow_other_default=true
       when: inventory_hostname not in groups['gateway']
 
-    - name: Passwordless sudo for Kolla-Ansible
-      ansible.builtin.copy:
-        dest: /etc/sudoers.d/90-kolla-ansible
-        content: "{{ ansible_user }} ALL=(ALL) NOPASSWD:ALL\n"
-        mode: "0440"
-        validate: visudo -cf %s
-
-    - name: Remove the 127.0.1.1 hostname alias (cluster names must resolve to real IPs)
+    - name: Remove the 127.0.1.1 hostname alias
       ansible.builtin.lineinfile:
         path: /etc/hosts
         regexp: '^127\.0\.1\.1\s'
@@ -45,50 +37,8 @@
         marker: "# {mark} cloud03 lab"
         block: "{{ lookup('ansible.builtin.template', 'hosts.j2') }}"
 
-    - name: Find netplan files that do not define the NIC
-      ansible.builtin.shell: |
-        for f in /etc/netplan/*.yaml /etc/netplan/*.yml; do
-          [ -e "$f" ] || continue
-          b=$(basename "$f")
-          [ "$b" = "01-network-manager-all.yaml" ] && continue
-          [ "$b" = "60-cloud03-vlans.yaml" ] && continue
-          if ! grep -q -- "{{ nic }}" "$f"; then
-            printf '%s\n' "$f"
-          fi
-        done
-      register: stray_netplans
-      changed_when: false
-
-    - name: Remove netplan files that do not define the NIC
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: absent
-      loop: "{{ stray_netplans.stdout_lines }}"
-      when: stray_netplans.stdout_lines | length > 0
-
-    - name: Check whether the NIC is defined outside cloud-init
-      ansible.builtin.shell: |
-        found=0
-        for f in /etc/netplan/*.yaml /etc/netplan/*.yml; do
-          [ -e "$f" ] || continue
-          b=$(basename "$f")
-          [ "$b" = "50-cloud-init.yaml" ] && continue
-          [ "$b" = "01-network-manager-all.yaml" ] && continue
-          [ "$b" = "60-cloud03-vlans.yaml" ] && continue
-          if grep -q -- "{{ nic }}" "$f"; then
-            found=1
-            break
-          fi
-        done
-        echo "$found"
-      register: nic_defined_elsewhere
-      changed_when: false
-
-    - name: Remove cloud-init netplan when the NIC is defined elsewhere
-      ansible.builtin.file:
-        path: /etc/netplan/50-cloud-init.yaml
-        state: absent
-      when: nic_defined_elsewhere.stdout | trim == "1"
+    - name: Clean stray netplan files
+      ansible.builtin.include_tasks: tasks/clean_netplan.yml
 
     - name: Secure base netplan permissions
       ansible.builtin.file:
