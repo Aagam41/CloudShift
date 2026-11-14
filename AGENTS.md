@@ -39,7 +39,7 @@ OpenStack CLI needs `source ~/kolla-venv/bin/activate && source /etc/kolla/admin
 - `ansible.cfg` sets `inventory = inventory.yml`; run playbooks from `ansible/`.
 - Gateway group contains only controllers with Wi-Fi. `gateway_vrrp_password` must be exactly 8 characters.
 - Existing node netplan must keep its `192.168.0.x` address and have no default route; `01-network.yml` aborts otherwise unless `-e allow_other_default=true`.
-- `01-network.yml` removes cloud-init and other stray netplan files before applying `60-cloud03-vlans.yaml`, keeping only `01-network-manager-all.yaml`.
+- `01-network.yml` removes stray netplan files that do not define the node's NIC, and removes `50-cloud-init.yaml` only when the NIC is defined elsewhere; it keeps `01-network-manager-all.yaml`.
 - VLAN interfaces are named uniformly (`mgmt`, `storage`, ...), never by physical NIC name.
 - `kolla/install.sh` merges `multinode-head.ini` with Kolla's stock inventory from the venv; the head's service groups must list all 3 controllers. Check its printed inventory graph.
 - `RELEASE` selects `stable/<release>` (default `2026.1`).
