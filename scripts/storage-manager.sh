@@ -9,4 +9,4 @@ if [ "$#" -ne 1 ]; then
 fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-exec python3 "$HERE/scripts/storage_manager.py" "$1"
+exec python3 "$HERE/storage_manager.py" "$1"

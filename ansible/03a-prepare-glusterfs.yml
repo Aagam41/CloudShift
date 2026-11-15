@@ -116,6 +116,8 @@
             chdir: "{{ repo_root }}"
           delegate_to: localhost
           become: false
+          vars:
+            ansible_become: false
           when: configure_prompt.user_input | default('') | lower in ['y', 'yes']
 
     - name: Apply approved storage configuration
