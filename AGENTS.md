@@ -2,7 +2,7 @@
 
 Ansible + Kolla-Ansible deployment of an 8-node, no-single-controller OpenStack lab. This repo contains infrastructure code and runbooks, not an application; there is no build, lint, or test suite.
 
-## Commands (run on cloud03-contorller01 unless noted)
+## Commands (run on cloud03-controller01 unless noted)
 
 - Bootstrap deploy host: `scripts/00-controller01-bootstrap.sh` (as normal user)
 - Preflight (read-only): `cd ansible && ansible-playbook 00-preflight.yml -K`
@@ -35,14 +35,14 @@ OpenStack CLI needs `source ~/kolla-venv/bin/activate && source /etc/kolla/admin
 
 ## High-signal quirks
 
-- Hostnames are intentionally misspelled (`cloud03-contorller01`, `...contorller02`, `...contorlcompute`) and must equal the inventory names; preflight checks this. Do not "fix" them.
+- Hostnames are `cloud03-controller01`, `cloud03-controller02`, and `cloud03-controller03`; they must equal the inventory names. Preflight checks this.
 - `ansible/inventory.yml` is the single source of truth for the node list; `host_id` drives every IP address.
 - `ansible.cfg` sets `inventory = inventory.yml`; run playbooks from `ansible/`.
 - Gateway group contains only controllers with Wi-Fi. `gateway_vrrp_password` must be exactly 8 characters.
 - Existing node netplan must keep its `192.168.0.x` address and have no default route; `01-network.yml` aborts otherwise unless `-e allow_other_default=true`.
 - `01-network.yml` removes stray netplan files that do not define the node's NIC, and removes `50-cloud-init.yaml` only when the NIC is defined elsewhere; it keeps `01-network-manager-all.yaml`.
 - VLAN interfaces are named uniformly (`mgmt`, `storage`, ...), never by physical NIC name.
-- `kolla/install.sh` merges `multinode-head.ini` with Kolla's stock inventory from the venv; the head's service groups must list all 3 controllers. Check its printed inventory graph.
+- `kolla/install.sh` validates `multinode-head.ini` against `ansible/inventory.yml`, then merges it with Kolla's stock inventory from the venv; the head's service groups must list all 3 controllers. Check its printed inventory graph.
 - `RELEASE` selects `stable/<release>` (default `2026.1`).
 - `kolla-genpwd` always runs in `install.sh` and only fills blank password values.
 - `deploy.sh` stops after prechecks and waits for `DEPLOY`; `post-deploy` needs `-i` (already fixed here).

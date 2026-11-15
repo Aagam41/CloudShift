@@ -1,5 +1,5 @@
 ---
-# Verified against the kolla-ansible 23.0.0 defaults. Same file for all nodes: interface
+# Verified against the kolla-ansible stable/2026.1 defaults. Same file for all nodes: interface
 # names are identical everywhere because ansible/01-network.yml names the VLAN interfaces.
 kolla_base_distro: "ubuntu"
 openstack_release: "2026.1"            # install.sh overwrites this from $RELEASE
