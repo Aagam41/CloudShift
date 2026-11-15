@@ -34,8 +34,8 @@ Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompu
 3. Your home Wi-Fi is 192.168.1.0/24: that no longer clashes with anything. Preflight verifies it against every lab subnet.
 4. Each node's existing netplan keeps its 192.168.0.x address and has NO default route on it (the lab default route is via VLAN 50).
 5. **Disk space on the three controllers.** Every VM disk, image and metric is stored 3 times, once per controller, under
-   `/srv/gluster`. If a controller has a spare data disk, run step 4a (`03a-prepare-gluster-disk.yml`) or mount it there
-   first and set `gluster_require_dedicated_disk: true`.
+   `/srv/gluster`. If a controller has a spare data disk or unallocated space, run step 4a (`./scripts/storage-manager.sh <controller>`)
+   to discover the storage, choose a device or partition, and prepare `/srv/gluster` interactively.
 6. RAM: each controller runs the full control plane + telemetry + monitoring, so 16 GB+ each (more for `contorlcompute` if it hosts VMs).
 
 ## Steps (about 1-2 hours plus image downloads)
@@ -46,7 +46,7 @@ Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompu
 | 2 | controller01 | `scripts/00-controller01-bootstrap.sh`  (Ansible + SSH keys to all nodes) |
 | 3 | controller01 | `cd ansible && ansible-playbook 00-preflight.yml -K`  (read-only; fix what it reports) |
 | 4 | controller01 | `scripts/cpu-check.sh`  (CPU model for live migration; edit `kolla/config/nova/nova-compute.conf` if told) |
-| 4a | controller01 | `cd ansible && ansible-playbook 03a-prepare-gluster-disk.yml -K`  (optional: format/mount a dedicated disk at `/srv/gluster` on each controller) |
+| 4a | controller01 | `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml`  (interactive storage discovery and `/srv/gluster` preparation; runs serially on all controllers) |
 | 5 | controller01 | `cd ansible && ansible-playbook site.yml -K`  (VLANs, floating gateway, DNS, GlusterFS, then verifies all of it) |
 | 6 | controller01 | `kolla/install.sh`  (the inventory check must show the 3 controllers on every line) |
 | 7 | controller01 | `kolla/deploy.sh`  (bootstrap, prechecks, **pause**, deploy, post-deploy) |
@@ -57,6 +57,19 @@ Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompu
 
 Steps 3 and 5 stop with a clear message at the first problem; re-running any playbook is safe.
 Then open Grafana (`docs/ACCESS.md`): seven dashboards are already there. Run the failure drills in `docs/HA.md` once.
+
+## Interactive storage preparation (`storage-manager.sh`)
+`./scripts/storage-manager.sh controller01` discovers all disks, partitions, mounts and unallocated space on that controller,
+displays them as tables, and asks you to choose:
+
+- a physical disk with unallocated space (create a partition using all of it or a custom size such as `250G` or `1.5T`);
+- an unmounted partition (format it as XFS, or preserve its filesystem);
+- the current `/srv/gluster` partition (keep it or reformat it);
+- another mounted data partition (advanced: repurpose it for `/srv/gluster` after confirmation).
+
+Nothing is changed during discovery. Formatting, repurposing and partition creation always ask for explicit
+confirmation, and `/etc/fstab` is backed up before any change. The script configures exactly one controller per run;
+repeat it for `controller02`, `controller03`, and so on.
 
 ## Live migration
 ```

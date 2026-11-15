@@ -19,6 +19,7 @@ Ansible + Kolla-Ansible deployment of an 8-node, no-single-controller OpenStack 
 - Invoice: `~/kolla-venv/bin/python scripts/invoice.py --month YYYY-MM`
 - CPU compatibility: `scripts/cpu-check.sh`
 - Sync deploy role to other controllers: `scripts/sync-deploy-host.sh`
+- Interactive GlusterFS storage prep: `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml` (serially on all controllers, or add `-l controller01`); helper: `./scripts/storage-manager.sh controller01`
 
 OpenStack CLI needs `source ~/kolla-venv/bin/activate && source /etc/kolla/admin-openrc.sh`. Kolla inventory is `~/multinode`.
 
@@ -48,6 +49,8 @@ OpenStack CLI needs `source ~/kolla-venv/bin/activate && source /etc/kolla/admin
 - GlusterFS bricks are plain directories under `/srv/gluster`; mount a dedicated disk there before `03-storage.yml` if desired (`gluster_require_dedicated_disk: true`). `gluster_arbiter` must be set before storage.
 - Unmounted Gluster mount points are made immutable; services must fail loudly rather than write locally.
 - `/etc/kolla/passwords.yml` exists only on the deploy host; back it up off-lab. `sync-deploy-host.sh` propagates it.
+- `storage-manager.sh` writes `/tmp/<node>-storage.json` during discovery and `/tmp/<node>-gluster-extra-vars.json` before applying; both are safe to inspect or delete.
+- `03a-prepare-gluster-disk.yml` is non-interactive and requires `-e @<extra-vars>.json` with `approved: true`; use `storage-manager.sh` to generate it.
 - `make_dashboards.py` `main()` deletes every `*.json` in its output dir before regenerating.
 - `cloud_exporter.py` binds `BIND` (default `10.0.10.11`) on port `9199` and runs on every controller.
 - Scheduler starts in `dry_run: true`; Prometheus uses basic auth `admin` / `prometheus_password`.
