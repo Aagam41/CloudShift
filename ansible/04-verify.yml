@@ -60,17 +60,19 @@
   hosts: gateway
   become: true
   tasks:
-    - name: Does this node hold it?
+    - name: Check every gateway node for the floating address
       ansible.builtin.shell: ip -4 -o addr show dev egress | grep -c ' {{ gateway_egress_ip }}/' || true
-      register: has_vip
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['gateway'] }}"
+      register: vip_checks
       changed_when: false
+      run_once: true
 
     - name: Exactly one holder
       ansible.builtin.assert:
-        that: (groups['gateway'] | map('extract', hostvars, 'has_vip') | map(attribute='stdout') | select('equalto', '1') | list | length) == 1
+        that: (vip_checks.results | map(attribute='stdout') | select('equalto', '1') | list | length) == 1
         fail_msg: "The floating gateway {{ gateway_egress_ip }} must be on exactly one controller. Check: systemctl status lab-keepalived, journalctl -u lab-keepalived"
         success_msg: "{{ gateway_egress_ip }} is held by one controller"
-      run_once: true
 
 - name: Storage replicated on all three controllers
   hosts: control
