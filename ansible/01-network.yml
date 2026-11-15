@@ -61,11 +61,16 @@
         PY
       changed_when: false
 
-    - name: Remove active default routes before VLAN setup
+    - name: Remove unwanted active default routes
       ansible.builtin.shell: |
-        while ip route del default 2>/dev/null; do :; done
-      when: vlan_interfaces.rc != 0
+        ip -4 route show default | awk '{print $3, $5}' | while read -r gw dev; do
+          if [ "$gw" != "{{ gateway_egress_ip }}" ]; then
+            ip route del default via "$gw" dev "$dev" || true
+          fi
+        done
+      when: inventory_hostname not in groups['gateway']
       changed_when: false
+      failed_when: false
 
     - name: Re-check default routes
       ansible.builtin.include_tasks: tasks/check_default_route.yml

@@ -9,11 +9,11 @@
     - name: Reach the first controller on every VLAN
       ansible.builtin.command: ping -c 2 -W 2 -I {{ item.iface }} {{ item.ip }}
       loop:
-        - {iface: mgmt,    ip: "{{ net.mgmt }}.{{ hostvars[c1].host_id }}"}
-        - {iface: storage, ip: "{{ net.storage }}.{{ hostvars[c1].host_id }}"}
-        - {iface: tunnel,  ip: "{{ net.tunnel }}.{{ hostvars[c1].host_id }}"}
-        - {iface: dns,     ip: "{{ net.dns }}.{{ hostvars[c1].host_id }}"}
-        - {iface: egress,  ip: "{{ net.egress }}.{{ hostvars[c1].host_id }}"}
+        - {iface: mgmt,    ip: "{{ hostvars[c1].net.mgmt }}.{{ hostvars[c1].host_id }}"}
+        - {iface: storage, ip: "{{ hostvars[c1].net.storage }}.{{ hostvars[c1].host_id }}"}
+        - {iface: tunnel,  ip: "{{ hostvars[c1].net.tunnel }}.{{ hostvars[c1].host_id }}"}
+        - {iface: dns,     ip: "{{ hostvars[c1].net.dns }}.{{ hostvars[c1].host_id }}"}
+        - {iface: egress,  ip: "{{ hostvars[c1].net.egress }}.{{ hostvars[c1].host_id }}"}
       changed_when: false
       when: inventory_hostname != c1
 
@@ -64,9 +64,9 @@
 
     - name: Exactly one holder
       ansible.builtin.assert:
-        that: groups['gateway'] | map('extract', hostvars, ['has_vip', 'stdout']) | map('int') | sum == 1
+        that: (groups['gateway'] | map('extract', hostvars, 'has_vip') | map(attribute='stdout') | select('equalto', '1') | list | length) == 1
         fail_msg: "The floating gateway {{ gateway_egress_ip }} must be on exactly one controller. Check: systemctl status lab-keepalived, journalctl -u lab-keepalived"
-        success_msg: "{{ gateway_egress_ip }} is held by {{ groups['gateway'] | select('extract', hostvars, ['has_vip', 'stdout']) | map('extract', hostvars) | selectattr('has_vip.stdout', 'equalto', '1') | map(attribute='inventory_hostname') | first }}"
+        success_msg: "{{ gateway_egress_ip }} is held by one controller"
       run_once: true
 
 - name: Storage replicated on all three controllers
