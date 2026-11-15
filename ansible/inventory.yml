@@ -8,7 +8,7 @@ all:
       hosts:
         cloud03-controller01: {ansible_host: 192.168.0.11, host_id: 11, nic: eno2}
         cloud03-controller02: {ansible_host: 192.168.0.12, host_id: 12, nic: eno2}
-        # cloud03-controlcompute: {ansible_host: 192.168.0.13, host_id: 13, nic: enp3s0}
+        cloud03-controller03: {ansible_host: 192.168.0.13, host_id: 13, nic: eno2}
     compute:
       hosts:
         # cloud03-controlcompute:                      # controller 03 is also a compute node
@@ -21,4 +21,4 @@ all:
       hosts:
         cloud03-controller01: {wifi_if: wlo1, gw_priority: 150}   # CHANGE wifi_if (ip -br link)
         cloud03-controller02: {wifi_if: wlo1, gw_priority: 120}   # no Wi-Fi adapter on a controller?
-        # cloud03-controlcompute: {wifi_if: wlp2s0, gw_priority: 100} # -> delete its line (see docs/HA.md)
+        cloud03-controller03: {wifi_if: wlo1, gw_priority: 100} # -> delete its line (see docs/HA.md)
