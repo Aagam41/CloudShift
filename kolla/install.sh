@@ -13,7 +13,7 @@ python3 -m venv "$VENV"
 source "$VENV/bin/activate"
 pip install -U pip
 pip install "git+https://opendev.org/openstack/kolla-ansible@stable/${RELEASE}" \
-            docker python-openstackclient python-gnocchiclient python-cloudkittyclient openstacksdk
+            docker python-openstackclient gnocchiclient python-cloudkittyclient openstacksdk
 
 sudo mkdir -p /etc/kolla && sudo chown "$USER": /etc/kolla
 cp -rn "$SHARE"/etc_examples/kolla/* /etc/kolla/
