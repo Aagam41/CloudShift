@@ -300,13 +300,13 @@
       - name: Move a mounted partition away from its old mount point
         ansible.builtin.mount:
           path: "{{ old_mount_point }}"
-          state: absent
+          state: unmounted
         when: old_mount_point | length > 0 and old_mount_point != mount_point
 
       - name: Unmount the target before formatting
         ansible.builtin.mount:
           path: "{{ mount_point }}"
-          state: absent
+          state: unmounted
         when: format_device | bool and (device_mount_now.stdout | default('') | trim) == mount_point
 
       - name: Install XFS utilities
