@@ -1,21 +1,17 @@
 ---
-# GlusterFS storage preparation and application.
+# GlusterFS storage discovery and application.
 #
 # Discover one node:
 #   ansible-playbook 03a-prepare-glusterfs.yml -l controller01 -e discover_mode=true
 #
-# Interactive preparation:
+# Apply pending configurations:
 #   ansible-playbook 03a-prepare-glusterfs.yml
 #   ansible-playbook 03a-prepare-glusterfs.yml -l controller01
-#
-# Apply an approved configuration:
-#   ansible-playbook 03a-prepare-glusterfs.yml -l controller01 -e @/tmp/controller01-gluster-extra-vars.json -e approved=true
 - name: Prepare GlusterFS storage
   hosts: control
   serial: 1
   become: true
   vars:
-    repo_root: "{{ playbook_dir | dirname }}"
     discover_mode: false
     approved: false
     storage_action: ""
@@ -91,283 +87,307 @@
             mode: "0600"
           delegate_to: localhost
           become: false
-
-    - name: Prepare storage
-      when: not (approved | bool) and not (discover_mode | bool)
-      block:
-        - name: Check whether GlusterFS storage is already configured
-          ansible.builtin.command: findmnt -n -o SOURCE,FSTYPE /srv/gluster
-          register: gluster_state
-          failed_when: false
-          changed_when: false
-
-        - name: Display storage state
-          ansible.builtin.debug:
-            msg: "{{ inventory_hostname }}: {{ 'configured (' ~ gluster_state.stdout ~ ')' if gluster_state.rc == 0 else 'not configured' }}"
-
-        - name: Ask whether to configure this node
-          ansible.builtin.pause:
-            prompt: "Configure {{ inventory_hostname }}? [y/N]"
-          register: configure_prompt
-
-        - name: Run the interactive storage manager
-          ansible.builtin.command: "{{ repo_root }}/scripts/storage-manager.sh {{ inventory_hostname }}"
-          args:
-            chdir: "{{ repo_root }}"
-          delegate_to: localhost
-          become: false
           vars:
             ansible_become: false
-          when: configure_prompt.user_input | default('') | lower in ['y', 'yes']
 
-    - name: Apply approved storage configuration
+    - name: Check whether GlusterFS storage is already configured
+      ansible.builtin.command: findmnt -n -o SOURCE,FSTYPE /srv/gluster
+      register: gluster_state
+      failed_when: false
+      changed_when: false
+
+    - name: Display storage state
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ 'configured (' ~ gluster_state.stdout ~ ')' if gluster_state.rc == 0 else 'not configured' }}"
+
+    - name: Load pending storage configuration
+      ansible.builtin.set_fact:
+        pending_config: "{{ lookup('file', '/tmp/' ~ inventory_hostname ~ '-gluster-extra-vars.json') | from_json }}"
+      register: pending_config_result
+      failed_when: false
+      changed_when: false
+
+    - name: Display pending configuration state
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ 'pending configuration found' if (pending_config is defined) else 'no pending configuration' }}"
+
+    - name: Show preparation command when no pending configuration
+      ansible.builtin.debug:
+        msg: "No pending configuration for {{ inventory_hostname }}. Prepare it first with: ./scripts/storage-manager.sh {{ inventory_hostname }}"
+      when: pending_config is not defined
+
+    - name: Skip host without pending configuration
+      ansible.builtin.meta: end_host
+      when: pending_config is not defined
+
+    - name: Use pending configuration
+      ansible.builtin.set_fact:
+        storage_action: "{{ pending_config.storage_action }}"
+        storage_parent_disk: "{{ pending_config.storage_parent_disk | default('') }}"
+        storage_device: "{{ pending_config.storage_device | default('') }}"
+        partition_size: "{{ pending_config.partition_size | default('all') }}"
+        format_device: "{{ pending_config.format_device | default(true) }}"
+        old_mount_point: "{{ pending_config.old_mount_point | default('') }}"
+        filesystem_type: "{{ pending_config.filesystem_type | default('xfs') }}"
+        mount_point: "{{ pending_config.mount_point | default('/srv/gluster') }}"
+        approved: "{{ pending_config.approved | default(true) }}"
+        use_root: "{{ pending_config.use_root | default(false) }}"
+
+    - name: Ensure one host when applying a global configuration
+      ansible.builtin.assert:
+        that: storage_action == '' or play_hosts | length == 1
+        fail_msg: "A global storage_action cannot be applied to multiple hosts."
+      when: pending_config is defined
+
+    - name: Apply pending storage
       when: approved | bool
       block:
-        - name: Only one host may be targeted
-          ansible.builtin.assert:
-            that: play_hosts | length == 1
-            fail_msg: "Run apply mode with -l <one-node>."
+      - name: Require explicit approval
+        ansible.builtin.assert:
+          that: approved | bool
+          fail_msg: "Refusing to run without approved=true."
 
-        - name: Require explicit approval
-          ansible.builtin.assert:
-            that: approved | bool
-            fail_msg: "Refusing to run without approved=true."
+      - name: Validate storage action
+        ansible.builtin.assert:
+          that: storage_action in ['create_partition', 'use_existing', 'use_root']
+          fail_msg: "storage_action must be create_partition, use_existing or use_root."
 
-        - name: Validate storage action
-          ansible.builtin.assert:
-            that: storage_action in ['create_partition', 'use_existing', 'use_root']
-            fail_msg: "storage_action must be create_partition, use_existing or use_root."
+      - name: Refuse root filesystem when a dedicated disk is required
+        ansible.builtin.assert:
+          that: not (gluster_require_dedicated_disk | default(false) | bool)
+          fail_msg: "gluster_require_dedicated_disk is true; use a dedicated disk instead of root."
+        when: use_root | bool
 
-        - name: Refuse root filesystem when a dedicated disk is required
-          ansible.builtin.assert:
-            that: not (gluster_require_dedicated_disk | default(false) | bool)
-            fail_msg: "gluster_require_dedicated_disk is true; use a dedicated disk instead of root."
-          when: use_root | bool
+      - name: Require a parent disk for partition creation
+        ansible.builtin.assert:
+          that: storage_action != 'create_partition' or (storage_parent_disk | length > 0)
+          fail_msg: "storage_parent_disk is required when storage_action=create_partition."
 
-        - name: Require a parent disk for partition creation
-          ansible.builtin.assert:
-            that: storage_action != 'create_partition' or (storage_parent_disk | length > 0)
-            fail_msg: "storage_parent_disk is required when storage_action=create_partition."
+      - name: Require a device for existing-partition mode
+        ansible.builtin.assert:
+          that: storage_action != 'use_existing' or (storage_device | length > 0)
+          fail_msg: "storage_device is required when storage_action=use_existing."
 
-        - name: Require a device for existing-partition mode
-          ansible.builtin.assert:
-            that: storage_action != 'use_existing' or (storage_device | length > 0)
-            fail_msg: "storage_device is required when storage_action=use_existing."
+      - name: Current mount point of the selected device
+        ansible.builtin.command: findmnt -n -o TARGET {{ storage_device }}
+        register: device_mount_now
+        changed_when: false
+        failed_when: false
+        when: storage_device | length > 0
 
-        - name: Current mount point of the selected device
-          ansible.builtin.command: findmnt -n -o TARGET {{ storage_device }}
-          register: device_mount_now
-          changed_when: false
-          failed_when: false
-          when: storage_device | length > 0
+      - name: Filesystem or special type of the selected device
+        ansible.builtin.command: blkid -s TYPE -o value {{ storage_device }}
+        register: device_type_now
+        changed_when: false
+        failed_when: false
+        when: storage_device | length > 0
 
-        - name: Filesystem or special type of the selected device
-          ansible.builtin.command: blkid -s TYPE -o value {{ storage_device }}
-          register: device_type_now
-          changed_when: false
-          failed_when: false
-          when: storage_device | length > 0
+      - name: Refuse unsafe existing devices
+        ansible.builtin.assert:
+          that:
+            - device_mount_now.stdout | trim not in ['/', '/boot', '/boot/efi']
+            - device_type_now.stdout | trim not in ['swap', 'LVM2_member', 'crypto_LUKS', 'linux_raid_member']
+          fail_msg: >-
+            Refusing to use {{ storage_device }}: it is a critical mount or a
+            swap/LVM/RAID/encrypted device.
+        when: storage_device | length > 0
 
-        - name: Refuse unsafe existing devices
-          ansible.builtin.assert:
-            that:
-              - device_mount_now.stdout | trim not in ['/', '/boot', '/boot/efi']
-              - device_type_now.stdout | trim not in ['swap', 'LVM2_member', 'crypto_LUKS', 'linux_raid_member']
-            fail_msg: >-
-              Refusing to use {{ storage_device }}: it is a critical mount or a
-              swap/LVM/RAID/encrypted device.
-          when: storage_device | length > 0
+      - name: Refuse to format a device mounted somewhere unexpected
+        ansible.builtin.assert:
+          that:
+            - device_mount_now.stdout | trim == ''
+              or device_mount_now.stdout | trim == old_mount_point
+              or device_mount_now.stdout | trim == mount_point
+          fail_msg: >-
+            {{ storage_device }} is mounted at {{ device_mount_now.stdout | trim }}.
+            Provide old_mount_point or unmount it first.
+        when: storage_device | length > 0 and format_device | bool
 
-        - name: Refuse to format a device mounted somewhere unexpected
-          ansible.builtin.assert:
-            that:
-              - device_mount_now.stdout | trim == ''
-                or device_mount_now.stdout | trim == old_mount_point
-                or device_mount_now.stdout | trim == mount_point
-            fail_msg: >-
-              {{ storage_device }} is mounted at {{ device_mount_now.stdout | trim }}.
-              Provide old_mount_point or unmount it first.
-          when: storage_device | length > 0 and format_device | bool
+      - name: Parent disk must exist
+        ansible.builtin.stat:
+          path: "{{ storage_parent_disk }}"
+        register: parent_disk_stat
+        failed_when: not parent_disk_stat.stat.exists
+        when: storage_action == 'create_partition'
 
-        - name: Parent disk must exist
-          ansible.builtin.stat:
-            path: "{{ storage_parent_disk }}"
-          register: parent_disk_stat
-          failed_when: not parent_disk_stat.stat.exists
-          when: storage_action == 'create_partition'
+      - name: Parent disk must have unallocated space
+        ansible.builtin.shell: |
+          parted -s {{ storage_parent_disk }} unit B print free | grep -q 'Free Space'
+        register: parent_free_check
+        changed_when: false
+        when: storage_action == 'create_partition'
 
-        - name: Parent disk must have unallocated space
-          ansible.builtin.shell: |
-            parted -s {{ storage_parent_disk }} unit B print free | grep -q 'Free Space'
-          register: parent_free_check
-          changed_when: false
-          when: storage_action == 'create_partition'
+      - name: Normalize partition size
+        ansible.builtin.set_fact:
+          sgdisk_size: >-
+            {{ '0' if partition_size == 'all'
+               else (partition_size if partition_size.startswith('+') else '+' + partition_size) }}
+        when: storage_action == 'create_partition'
 
-        - name: Normalize partition size
-          ansible.builtin.set_fact:
-            sgdisk_size: >-
-              {{ '0' if partition_size == 'all'
-                 else (partition_size if partition_size.startswith('+') else '+' + partition_size) }}
-          when: storage_action == 'create_partition'
+      - name: Install gdisk
+        ansible.builtin.apt:
+          name: gdisk
+          state: present
+        when: storage_action == 'create_partition'
 
-        - name: Install gdisk
-          ansible.builtin.apt:
-            name: gdisk
-            state: present
-          when: storage_action == 'create_partition'
+      - name: Partitions before creation
+        ansible.builtin.command: lsblk -r -n -o NAME,TYPE {{ storage_parent_disk }}
+        register: before_lsblk
+        changed_when: false
+        when: storage_action == 'create_partition'
 
-        - name: Partitions before creation
-          ansible.builtin.command: lsblk -r -n -o NAME,TYPE {{ storage_parent_disk }}
-          register: before_lsblk
-          changed_when: false
-          when: storage_action == 'create_partition'
+      - name: Create the new partition
+        ansible.builtin.command: sgdisk -n 0:0:{{ sgdisk_size }} {{ storage_parent_disk }}
+        when: storage_action == 'create_partition'
 
-        - name: Create the new partition
-          ansible.builtin.command: sgdisk -n 0:0:{{ sgdisk_size }} {{ storage_parent_disk }}
-          when: storage_action == 'create_partition'
+      - name: Reread the partition table
+        ansible.builtin.command: partprobe {{ storage_parent_disk }}
+        when: storage_action == 'create_partition'
+        changed_when: false
 
-        - name: Reread the partition table
-          ansible.builtin.command: partprobe {{ storage_parent_disk }}
-          when: storage_action == 'create_partition'
-          changed_when: false
+      - name: Wait for device nodes to settle
+        ansible.builtin.command: udevadm settle
+        when: storage_action == 'create_partition'
+        changed_when: false
 
-        - name: Wait for device nodes to settle
-          ansible.builtin.command: udevadm settle
-          when: storage_action == 'create_partition'
-          changed_when: false
+      - name: Partitions after creation
+        ansible.builtin.command: lsblk -r -n -o NAME,TYPE {{ storage_parent_disk }}
+        register: after_lsblk
+        changed_when: false
+        when: storage_action == 'create_partition'
 
-        - name: Partitions after creation
-          ansible.builtin.command: lsblk -r -n -o NAME,TYPE {{ storage_parent_disk }}
-          register: after_lsblk
-          changed_when: false
-          when: storage_action == 'create_partition'
+      - name: Names before creation
+        ansible.builtin.set_fact:
+          parts_before: >-
+            {{ before_lsblk.stdout_lines
+               | select('match', '^[^\s]+\s+part$')
+               | map('regex_replace', '^(\S+).*$', '\1') | list }}
+        when: storage_action == 'create_partition'
 
-        - name: Names before creation
-          ansible.builtin.set_fact:
-            parts_before: >-
-              {{ before_lsblk.stdout_lines
-                 | select('match', '^[^\s]+\s+part$')
-                 | map('regex_replace', '^(\S+).*$', '\1') | list }}
-          when: storage_action == 'create_partition'
+      - name: Names after creation
+        ansible.builtin.set_fact:
+          parts_after: >-
+            {{ after_lsblk.stdout_lines
+               | select('match', '^[^\s]+\s+part$')
+               | map('regex_replace', '^(\S+).*$', '\1') | list }}
+        when: storage_action == 'create_partition'
 
-        - name: Names after creation
-          ansible.builtin.set_fact:
-            parts_after: >-
-              {{ after_lsblk.stdout_lines
-                 | select('match', '^[^\s]+\s+part$')
-                 | map('regex_replace', '^(\S+).*$', '\1') | list }}
-          when: storage_action == 'create_partition'
+      - name: Existing partitions must be untouched
+        ansible.builtin.assert:
+          that: parts_before | difference(parts_after) | length == 0
+          fail_msg: "Refusing to continue: an existing partition disappeared."
+        when: storage_action == 'create_partition'
 
-        - name: Existing partitions must be untouched
-          ansible.builtin.assert:
-            that: parts_before | difference(parts_after) | length == 0
-            fail_msg: "Refusing to continue: an existing partition disappeared."
-          when: storage_action == 'create_partition'
+      - name: Exactly one new partition must exist
+        ansible.builtin.assert:
+          that: parts_after | difference(parts_before) | length == 1
+          fail_msg: "Expected exactly one new partition."
+        when: storage_action == 'create_partition'
 
-        - name: Exactly one new partition must exist
-          ansible.builtin.assert:
-            that: parts_after | difference(parts_before) | length == 1
-            fail_msg: "Expected exactly one new partition."
-          when: storage_action == 'create_partition'
+      - name: Store the new partition device
+        ansible.builtin.set_fact:
+          storage_device: "/dev/{{ (parts_after | difference(parts_before))[0] }}"
+        when: storage_action == 'create_partition'
 
-        - name: Store the new partition device
-          ansible.builtin.set_fact:
-            storage_device: "/dev/{{ (parts_after | difference(parts_before))[0] }}"
-          when: storage_action == 'create_partition'
+      - name: Move a mounted partition away from its old mount point
+        ansible.builtin.mount:
+          path: "{{ old_mount_point }}"
+          state: absent
+        when: old_mount_point | length > 0 and old_mount_point != mount_point
 
-        - name: Move a mounted partition away from its old mount point
-          ansible.builtin.mount:
-            path: "{{ old_mount_point }}"
-            state: absent
-          when: old_mount_point | length > 0 and old_mount_point != mount_point
+      - name: Unmount the target before formatting
+        ansible.builtin.mount:
+          path: "{{ mount_point }}"
+          state: absent
+        when: format_device | bool and (device_mount_now.stdout | default('') | trim) == mount_point
 
-        - name: Unmount the target before formatting
-          ansible.builtin.mount:
-            path: "{{ mount_point }}"
-            state: absent
-          when: format_device | bool and (device_mount_now.stdout | default('') | trim) == mount_point
+      - name: Install XFS utilities
+        ansible.builtin.apt:
+          name: xfsprogs
+          state: present
+        when: format_device | bool and filesystem_type == 'xfs'
 
-        - name: Install XFS utilities
-          ansible.builtin.apt:
-            name: xfsprogs
-            state: present
-          when: format_device | bool and filesystem_type == 'xfs'
+      - name: Format the device
+        ansible.builtin.command: mkfs.{{ filesystem_type }} -f {{ storage_device }}
+        when: format_device | bool
 
-        - name: Format the device
-          ansible.builtin.command: mkfs.{{ filesystem_type }} -f {{ storage_device }}
-          when: format_device | bool
+      - name: Detect the filesystem type when preserving
+        ansible.builtin.command: blkid -s TYPE -o value {{ storage_device }}
+        register: existing_fstype_raw
+        changed_when: false
+        when: not (format_device | bool) and (storage_device | length > 0)
 
-        - name: Detect the filesystem type when preserving
-          ansible.builtin.command: blkid -s TYPE -o value {{ storage_device }}
-          register: existing_fstype_raw
-          changed_when: false
-          when: not (format_device | bool) and (storage_device | length > 0)
+      - name: Require a filesystem when preserving
+        ansible.builtin.assert:
+          that: existing_fstype_raw.stdout | trim | length > 0
+          fail_msg: "Cannot preserve {{ storage_device }}: no filesystem detected."
+        when: not (format_device | bool) and (storage_device | length > 0)
 
-        - name: Require a filesystem when preserving
-          ansible.builtin.assert:
-            that: existing_fstype_raw.stdout | trim | length > 0
-            fail_msg: "Cannot preserve {{ storage_device }}: no filesystem detected."
-          when: not (format_device | bool) and (storage_device | length > 0)
+      - name: Store the filesystem type
+        ansible.builtin.set_fact:
+          effective_fstype: "{{ filesystem_type if (format_device | bool) else (existing_fstype_raw.stdout | trim if (existing_fstype_raw is defined and existing_fstype_raw.stdout is defined) else '') }}"
+        when: storage_device | length > 0
 
-        - name: Store the filesystem type
-          ansible.builtin.set_fact:
-            effective_fstype: "{{ filesystem_type if (format_device | bool) else (existing_fstype_raw.stdout | trim if (existing_fstype_raw is defined and existing_fstype_raw.stdout is defined) else '') }}"
-          when: storage_device | length > 0
+      - name: Get the filesystem UUID
+        ansible.builtin.command: blkid -s UUID -o value {{ storage_device }}
+        register: fs_uuid_raw
+        changed_when: false
+        when: storage_device | length > 0
 
-        - name: Get the filesystem UUID
-          ansible.builtin.command: blkid -s UUID -o value {{ storage_device }}
-          register: fs_uuid_raw
-          changed_when: false
-          when: storage_device | length > 0
+      - name: Require a UUID
+        ansible.builtin.assert:
+          that: fs_uuid_raw.stdout | trim | length > 0
+          fail_msg: "Could not determine the UUID of {{ storage_device }}."
+        when: storage_device | length > 0
 
-        - name: Require a UUID
-          ansible.builtin.assert:
-            that: fs_uuid_raw.stdout | trim | length > 0
-            fail_msg: "Could not determine the UUID of {{ storage_device }}."
-          when: storage_device | length > 0
+      - name: Create the mount point
+        ansible.builtin.file:
+          path: "{{ mount_point }}"
+          state: directory
+          mode: "0755"
 
-        - name: Create the mount point
-          ansible.builtin.file:
-            path: "{{ mount_point }}"
-            state: directory
-            mode: "0755"
+      - name: Back up /etc/fstab
+        ansible.builtin.copy:
+          src: /etc/fstab
+          dest: /etc/fstab.bak-gluster
+          remote_src: true
+          mode: "0644"
+        when: not (use_root | bool)
 
-        - name: Back up /etc/fstab
-          ansible.builtin.copy:
-            src: /etc/fstab
-            dest: /etc/fstab.bak-gluster
-            remote_src: true
-            mode: "0644"
-          when: not (use_root | bool)
+      - name: Remove existing mount-point entries from /etc/fstab
+        ansible.builtin.replace:
+          path: /etc/fstab
+          regexp: '{{ "^[^#].*\\s" ~ (mount_point | regex_escape) ~ "\\s+.*$" }}'
+          replace: ''
+        when: not (use_root | bool)
 
-        - name: Remove existing mount-point entries from /etc/fstab
-          ansible.builtin.replace:
-            path: /etc/fstab
-            regexp: '{{ "^[^#].*\\s" ~ (mount_point | regex_escape) ~ "\\s+.*$" }}'
-            replace: ''
-          when: not (use_root | bool)
+      - name: Mount the filesystem persistently
+        ansible.builtin.mount:
+          path: "{{ mount_point }}"
+          src: "UUID={{ fs_uuid_raw.stdout | trim }}"
+          fstype: "{{ effective_fstype }}"
+          opts: defaults
+          dump: 0
+          passno: 0
+          state: mounted
+        when: not (use_root | bool)
 
-        - name: Mount the filesystem persistently
-          ansible.builtin.mount:
-            path: "{{ mount_point }}"
-            src: "UUID={{ fs_uuid_raw.stdout | trim }}"
-            fstype: "{{ effective_fstype }}"
-            opts: defaults
-            dump: 0
-            passno: 0
-            state: mounted
-          when: not (use_root | bool)
+      - name: Verify the mount
+        ansible.builtin.command: findmnt -n -o TARGET,FSTYPE,SOURCE {{ mount_point }}
+        register: mount_verify
+        changed_when: false
+        when: not (use_root | bool)
 
-        - name: Verify the mount
-          ansible.builtin.command: findmnt -n -o TARGET,FSTYPE,SOURCE {{ mount_point }}
-          register: mount_verify
-          changed_when: false
-          when: not (use_root | bool)
+      - name: Confirm the mount is correct
+        ansible.builtin.assert:
+          that:
+            - mount_verify.stdout | trim | length > 0
+            - effective_fstype in mount_verify.stdout
+          fail_msg: "Verification failed for {{ mount_point }}."
+        when: not (use_root | bool)
 
-        - name: Confirm the mount is correct
-          ansible.builtin.assert:
-            that:
-              - mount_verify.stdout | trim | length > 0
-              - effective_fstype in mount_verify.stdout
-            fail_msg: "Verification failed for {{ mount_point }}."
-          when: not (use_root | bool)
+    - name: Remove pending configuration
+      ansible.builtin.file:
+        path: "/tmp/{{ inventory_hostname }}-gluster-extra-vars.json"
+        state: absent
+      when: pending_config is defined

@@ -46,7 +46,8 @@ Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompu
 | 2 | controller01 | `scripts/00-controller01-bootstrap.sh`  (Ansible + SSH keys to all nodes) |
 | 3 | controller01 | `cd ansible && ansible-playbook 00-preflight.yml -K`  (read-only; fix what it reports) |
 | 4 | controller01 | `scripts/cpu-check.sh`  (CPU model for live migration; edit `kolla/config/nova/nova-compute.conf` if told) |
-| 4a | controller01 | `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml`  (interactive storage discovery and `/srv/gluster` preparation; runs serially on all controllers) |
+| 4a | controller01 | `./scripts/storage-manager.sh controller01`  (interactive storage discovery and selection; creates `/tmp/controller01-gluster-extra-vars.json`) |
+| 4b | controller01 | `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml`  (applies pending `/srv/gluster` configurations) |
 | 5 | controller01 | `cd ansible && ansible-playbook site.yml -K`  (VLANs, floating gateway, DNS, GlusterFS, then verifies all of it) |
 | 6 | controller01 | `kolla/install.sh`  (the inventory check must show the 3 controllers on every line) |
 | 7 | controller01 | `kolla/deploy.sh`  (bootstrap, prechecks, **pause**, deploy, post-deploy) |
@@ -68,8 +69,10 @@ displays them as tables, and asks you to choose:
 - another mounted data partition (advanced: repurpose it for `/srv/gluster` after confirmation).
 
 Nothing is changed during discovery. Formatting, repurposing and partition creation always ask for explicit
-confirmation, and `/etc/fstab` is backed up before any change. The script configures exactly one controller per run;
-repeat it for `controller02`, `controller03`, and so on.
+confirmation, and `/etc/fstab` is backed up before any change. The script prepares one controller per run and writes
+`/tmp/<controller>-gluster-extra-vars.json`; repeat it for `controller02`, `controller03`, and so on. After all
+controllers are prepared, run `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml` to apply the pending
+configurations.
 
 ## Live migration
 ```

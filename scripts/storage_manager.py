@@ -623,6 +623,11 @@ def process_node(node, args):
         print(json.dumps(extra, indent=2))
         return 0
 
+    if not args.apply:
+        print("\nConfiguration prepared.")
+        print(f"Apply later with: cd ansible && ansible-playbook 03a-prepare-glusterfs.yml -l {node}")
+        return 0
+
     print(f"\nApplying the configuration on {node}...\n")
     run_interactive(
         ["ansible-playbook", "-i", INVENTORY, PLAYBOOK,
@@ -648,6 +653,8 @@ def main():
     parser.add_argument("--mock", help="use a mock discovery JSON file instead of Ansible")
     parser.add_argument("--dry-run", action="store_true",
                         help="show the extra vars and do not run the apply playbook")
+    parser.add_argument("--apply", action="store_true",
+                        help="also run the Ansible apply playbook immediately")
     args = parser.parse_args()
 
     if args.mock:
