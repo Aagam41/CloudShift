@@ -3,6 +3,7 @@
 # Run before site.yml:  ansible-playbook 03a-prepare-gluster-disk.yml -K
 - name: Prepare a dedicated disk for GlusterFS
   hosts: control
+  serial: 1
   become: true
   tasks:
     - name: List available block devices
@@ -20,25 +21,37 @@
       ansible.builtin.debug:
         msg: "{{ lsblk_out.stdout_lines + parted_out.stdout_lines }}"
 
+    - name: Detect unmounted partitions
+      ansible.builtin.shell: |
+        lsblk -r -n -o NAME,TYPE,MOUNTPOINT | awk '$2=="part" && $3=="" {print "/dev/" $1}'
+      register: detected_parts
+      changed_when: false
+
+    - name: Store detected device
+      ansible.builtin.set_fact:
+        detected_disk: "{{ detected_parts.stdout_lines[0] | default('') }}"
+
+    - name: Show detected device
+      ansible.builtin.debug:
+        msg: "Detected unmounted partition: {{ detected_disk if detected_disk else 'none' }}"
+
     - name: Select device to format
       ansible.builtin.pause:
-        prompt: "Enter device (e.g. /dev/sdb1), or leave blank to skip"
+        prompt: "Enter device (blank to use detected: {{ detected_disk if detected_disk else 'none' }}, or 'skip')"
       register: device_prompt
 
-    - name: Confirm destructive format
-      ansible.builtin.pause:
-        prompt: "Type YES to format {{ device_prompt.user_input }}"
-      register: confirm_prompt
-      when: device_prompt.user_input | trim != ''
-
-    - name: Store selected device
+    - name: Resolve selected device
       ansible.builtin.set_fact:
-        gluster_disk: "{{ device_prompt.user_input | trim }}"
-      when: device_prompt.user_input | trim != ''
+        gluster_disk: "{{ device_prompt.user_input | trim if (device_prompt.user_input | trim not in ['', 'skip']) else (detected_disk if (device_prompt.user_input | trim == '' and detected_disk | default('') | length > 0) else '') }}"
 
     - name: Skip host if no device selected
       ansible.builtin.meta: end_host
       when: gluster_disk | default('') | trim == ''
+
+    - name: Confirm destructive format
+      ansible.builtin.pause:
+        prompt: "Type YES to format {{ gluster_disk }}"
+      register: confirm_prompt
 
     - name: Require explicit YES confirmation
       ansible.builtin.assert:
