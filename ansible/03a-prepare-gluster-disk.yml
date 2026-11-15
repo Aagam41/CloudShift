@@ -89,8 +89,7 @@
         passno: 0
         state: mounted
 
-    - name: Ensure GlusterFS requires a dedicated disk
-      ansible.builtin.lineinfile:
-        path: group_vars/all.yml
-        regexp: '^gluster_require_dedicated_disk:'
-        line: 'gluster_require_dedicated_disk: true'
+    # NOTE: gluster_require_dedicated_disk is intentionally NOT set here.
+    # Setting it globally would break 03-storage.yml on controllers without a
+    # dedicated disk. Set it manually in group_vars/all.yml only if every
+    # controller has a dedicated disk.
