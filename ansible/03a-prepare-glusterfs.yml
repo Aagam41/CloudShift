@@ -100,12 +100,20 @@
       ansible.builtin.debug:
         msg: "{{ inventory_hostname }}: {{ 'configured (' ~ gluster_state.stdout ~ ')' if gluster_state.rc == 0 else 'not configured' }}"
 
-    - name: Load pending storage configuration
-      ansible.builtin.set_fact:
-        pending_config: "{{ lookup('file', '/tmp/' ~ inventory_hostname ~ '-gluster-extra-vars.json') | from_json }}"
-      register: pending_config_result
+    - name: Read pending storage configuration
+      ansible.builtin.command: cat /tmp/{{ inventory_hostname }}-gluster-extra-vars.json
+      register: pending_config_raw
       failed_when: false
       changed_when: false
+      delegate_to: localhost
+      become: false
+      vars:
+        ansible_become: false
+
+    - name: Load pending storage configuration
+      ansible.builtin.set_fact:
+        pending_config: "{{ pending_config_raw.stdout | from_json }}"
+      when: pending_config_raw.rc == 0
 
     - name: Display pending configuration state
       ansible.builtin.debug:
