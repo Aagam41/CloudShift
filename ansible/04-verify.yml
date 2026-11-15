@@ -5,6 +5,9 @@
   become: true
   vars:
     c1: "{{ groups['control'][0] }}"
+    # Compute this in the play so verification does not depend on the group var
+    # being templated in a compute-node context.
+    dns_servers: "{{ groups['control'] | map('extract', hostvars, 'host_id') | map('regex_replace', '^', hostvars[c1].net.dns ~ '.') | list }}"
   tasks:
     - name: Reach the first controller on every VLAN
       ansible.builtin.command: ping -c 2 -W 2 -I {{ item.iface }} {{ item.ip }}
@@ -85,7 +88,7 @@
         path: "{{ gluster_brick_root }}/nova/brick/.mounttest-{{ item }}"
       loop: "{{ groups['compute'] }}"
       register: seen
-      failed_when: not seen.results | map(attribute='stat.exists') | list | min
+      failed_when: not seen.stat.exists
 
     - name: All good
       ansible.builtin.debug:
