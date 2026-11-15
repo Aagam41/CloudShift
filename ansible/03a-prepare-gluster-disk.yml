@@ -1,0 +1,83 @@
+---
+# Interactive preparation of a dedicated disk for GlusterFS.
+# Run before site.yml:  ansible-playbook 03a-prepare-gluster-disk.yml -K
+- name: Prepare a dedicated disk for GlusterFS
+  hosts: control
+  become: true
+  tasks:
+    - name: List available block devices
+      ansible.builtin.command: lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL
+      register: lsblk_out
+      changed_when: false
+
+    - name: List free/unallocated space
+      ansible.builtin.command: parted -l
+      register: parted_out
+      changed_when: false
+      failed_when: false
+
+    - name: Show device candidates
+      ansible.builtin.debug:
+        msg: "{{ lsblk_out.stdout_lines + parted_out.stdout_lines }}"
+
+    - name: Select device to format
+      ansible.builtin.pause:
+        prompt: "Enter device (e.g. /dev/sdb1), or leave blank to skip"
+      register: device_prompt
+
+    - name: Confirm destructive format
+      ansible.builtin.pause:
+        prompt: "Type YES to format {{ device_prompt.user_input }}"
+      register: confirm_prompt
+      when: device_prompt.user_input | trim != ''
+
+    - name: Store selected device
+      ansible.builtin.set_fact:
+        gluster_disk: "{{ device_prompt.user_input | trim }}"
+      when: device_prompt.user_input | trim != ''
+
+    - name: Skip host if no device selected
+      ansible.builtin.meta: end_host
+      when: gluster_disk | default('') | trim == ''
+
+    - name: Require explicit YES confirmation
+      ansible.builtin.assert:
+        that: confirm_prompt.user_input == "YES"
+        fail_msg: "Aborted: confirmation was not YES"
+
+    - name: Device must exist
+      ansible.builtin.stat:
+        path: "{{ gluster_disk }}"
+      register: disk_stat
+      failed_when: not disk_stat.stat.exists
+
+    - name: Device must not already be mounted
+      ansible.builtin.command: findmnt -n "{{ gluster_disk }}"
+      register: mounted_check
+      failed_when: mounted_check.rc == 0
+      changed_when: false
+
+    - name: Format the partition as XFS
+      ansible.builtin.command: mkfs.xfs -f {{ gluster_disk }}
+
+    - name: Create mount point
+      ansible.builtin.file:
+        path: /srv/gluster
+        state: directory
+        mode: "0755"
+
+    - name: Mount the partition persistently
+      ansible.builtin.mount:
+        path: /srv/gluster
+        src: "{{ gluster_disk }}"
+        fstype: xfs
+        opts: defaults
+        dump: 0
+        passno: 0
+        state: mounted
+
+    - name: Ensure GlusterFS requires a dedicated disk
+      ansible.builtin.lineinfile:
+        path: group_vars/all.yml
+        regexp: '^gluster_require_dedicated_disk:'
+        line: 'gluster_require_dedicated_disk: true'

@@ -34,7 +34,8 @@ Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompu
 3. Your home Wi-Fi is 192.168.1.0/24: that no longer clashes with anything. Preflight verifies it against every lab subnet.
 4. Each node's existing netplan keeps its 192.168.0.x address and has NO default route on it (the lab default route is via VLAN 50).
 5. **Disk space on the three controllers.** Every VM disk, image and metric is stored 3 times, once per controller, under
-   `/srv/gluster`. If a controller has a spare data disk, mount it there first and set `gluster_require_dedicated_disk: true`.
+   `/srv/gluster`. If a controller has a spare data disk, run step 4a (`03a-prepare-gluster-disk.yml`) or mount it there
+   first and set `gluster_require_dedicated_disk: true`.
 6. RAM: each controller runs the full control plane + telemetry + monitoring, so 16 GB+ each (more for `contorlcompute` if it hosts VMs).
 
 ## Steps (about 1-2 hours plus image downloads)
@@ -45,6 +46,7 @@ Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompu
 | 2 | controller01 | `scripts/00-controller01-bootstrap.sh`  (Ansible + SSH keys to all nodes) |
 | 3 | controller01 | `cd ansible && ansible-playbook 00-preflight.yml -K`  (read-only; fix what it reports) |
 | 4 | controller01 | `scripts/cpu-check.sh`  (CPU model for live migration; edit `kolla/config/nova/nova-compute.conf` if told) |
+| 4a | controller01 | `cd ansible && ansible-playbook 03a-prepare-gluster-disk.yml -K`  (optional: format/mount a dedicated disk at `/srv/gluster` on each controller) |
 | 5 | controller01 | `cd ansible && ansible-playbook site.yml -K`  (VLANs, floating gateway, DNS, GlusterFS, then verifies all of it) |
 | 6 | controller01 | `kolla/install.sh`  (the inventory check must show the 3 controllers on every line) |
 | 7 | controller01 | `kolla/deploy.sh`  (bootstrap, prechecks, **pause**, deploy, post-deploy) |

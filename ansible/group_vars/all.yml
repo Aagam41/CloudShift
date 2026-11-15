@@ -30,7 +30,7 @@ dns_servers: "{{ groups['control'] | map('extract', hostvars, 'host_id') | map('
 # ---- Shared storage: GlusterFS, 3 copies, one on each controller ----
 gluster_brick_root: /srv/gluster     # bricks live in <root>/<volume>/brick on each controller
 gluster_arbiter: false               # true = third controller keeps only metadata (faster writes, 2 data copies)
-gluster_require_dedicated_disk: false  # true = refuse to put bricks on the root filesystem
+gluster_require_dedicated_disk: true  # true = refuse to put bricks on the root filesystem
 gluster_volumes:
   nova:    {mount: /var/lib/nova-shared,    clients: compute, virt: true}   # VM disks (live migration)
   glance:  {mount: /var/lib/glance-shared,  clients: control}               # images
