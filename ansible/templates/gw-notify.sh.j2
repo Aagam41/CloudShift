@@ -1,4 +1,8 @@
 #!/bin/bash
 # keepalived calls this on every state change: remember the state, then apply it to br-ex.
 echo "$1" > /run/lab-gateway-state
+if [ "$1" = MASTER ]; then
+  # Re-announce the floating gateway so peers/switches/ARP caches learn the new holder.
+  arping -U -I egress -c 5 {{ gateway_egress_ip }} >/dev/null 2>&1 || true
+fi
 /usr/local/sbin/provider-gateway.sh once

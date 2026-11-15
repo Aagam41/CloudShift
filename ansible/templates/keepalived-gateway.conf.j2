@@ -22,6 +22,12 @@ vrrp_instance LAB_GATEWAY {
     virtual_router_id {{ gateway_vrid }}
     priority {{ gw_priority }}
     advert_int 1
+    garp_master_delay 1
+    garp_master_repeat 5
+    garp_lower_prio_delay 10
+    garp_lower_prio_repeat 5
+    garp_master_refresh 30
+    garp_master_refresh_repeat 2
     authentication {
         auth_type PASS
         auth_pass {{ gateway_vrrp_password }}
