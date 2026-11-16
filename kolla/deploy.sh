@@ -15,7 +15,7 @@ if [ ! -f /etc/kolla/globals.yml ]; then
 fi
 
 kolla-ansible bootstrap-servers -i "$INV"
-kolla-ansible prechecks -i "$INV"
+kolla-ansible prechecks -i "$INV" --use-test-images
 
 echo
 echo 'Prechecks passed. Deploy pulls several GB per node through the Wi-Fi gateway: it takes a while.'
@@ -25,7 +25,7 @@ if [ "$answer" != 'DEPLOY' ]; then
   exit 0
 fi
 
-kolla-ansible deploy -i "$INV"
+kolla-ansible deploy -i "$INV" --use-test-images
 kolla-ansible post-deploy -i "$INV"
 
 mkdir -p ~/.config/openstack
