@@ -25,7 +25,7 @@ if [ "$answer" != 'DEPLOY' ]; then
   exit 0
 fi
 
-kolla-ansible deploy -i "$INV" --use-test-images
+kolla-ansible deploy -i "$INV"
 kolla-ansible post-deploy -i "$INV"
 
 mkdir -p ~/.config/openstack
