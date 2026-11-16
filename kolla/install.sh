@@ -103,7 +103,7 @@ INV="$HOME/multinode"
 awk '/^\[baremetal:children\]/{p=1} p' \
   "$SHARE/ansible/inventory/multinode" \
   | cat "$MULTINODE_HEAD" - > "$INV"
-sed -i "s/^ansible_user=.*/ansible_user=$(id -un)/" "$INV"
+sed -i "s/^ansible_user=.*/ansible_user=ansible/" "$INV"
 
 echo '==> Adding every Kolla host to known_hosts'
 HOSTS=$(
