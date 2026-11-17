@@ -5,6 +5,7 @@ source ~/kolla-venv/bin/activate
 source /etc/kolla/admin-openrc.sh
 
 IMAGE_NAME="${IMAGE_NAME:-loadtest}"
+KEY_NAME="${KEY_NAME:-loadtest}"
 FLAVOR="${FLAVOR:-m1.small}"
 NETWORK="${NETWORK:-private-net}"
 SECURITY_GROUP="${SECURITY_GROUP:-loadtest}"
@@ -95,6 +96,11 @@ if [ "$instances_per_node" -eq 0 ]; then
   exit 0
 fi
 
+if ! openstack keypair show "$KEY_NAME" >/dev/null 2>&1; then
+  echo "Keypair '$KEY_NAME' not found. Run openstack/00-create-loadtest-keypair.sh first." >&2
+  exit 1
+fi
+
 wait_for_http() {
   local url="$1"
   local attempts="${2:-30}"
@@ -129,6 +135,7 @@ for host in $COMPUTE_HOSTS; do
       --flavor "$FLAVOR" \
       --network "$NETWORK" \
       --security-group "$SECURITY_GROUP" \
+      --key-name "$KEY_NAME" \
       --availability-zone "nova:$host" \
       --wait
 
