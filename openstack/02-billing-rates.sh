@@ -8,7 +8,7 @@ source /etc/kolla/admin-openrc.sh
 # Kolla's CloudKitty API currently exposes v1. Force that version so the
 # client does not try the newer /v2 rating endpoints.
 rating() {
-    openstack --os-rating-api-version 1 rating "$@"
+    openstack --rating-api-version 1 rating "$@"
 }
 
 rating module enable hashmap
