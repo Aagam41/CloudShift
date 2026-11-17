@@ -123,23 +123,36 @@ if [ "${#launch_hosts[@]}" -eq 0 ]; then
   exit 0
 fi
 
-if [ "$suggested_global" -eq 999999 ] || [ "$suggested_global" -lt 1 ]; then
-  suggested_global=1
-fi
+declare -A instances_by_host
+total_requested=0
 
-if [ -n "$INSTANCES_PER_NODE" ]; then
-  instances_per_node="$INSTANCES_PER_NODE"
-else
-  read -r -p "How many instances per compute node? [$suggested_global]: " instances_per_node
-  instances_per_node="${instances_per_node:-$suggested_global}"
-fi
+for host in "${launch_hosts[@]}"; do
+  suggested="${suggested_by_host[$host]:-0}"
+  if [ "$suggested" -lt 0 ]; then
+    suggested=0
+  fi
 
-if ! [[ "$instances_per_node" =~ ^[0-9]+$ ]]; then
-  echo "Instance count must be a non-negative integer." >&2
-  exit 1
-fi
+  if [ -n "${INSTANCES_PER_NODE:-}" ]; then
+    count="$INSTANCES_PER_NODE"
+  else
+    read -r -p "How many instances on $host? [$suggested]: " count
+    count="${count:-$suggested}"
+  fi
 
-if [ "$instances_per_node" -eq 0 ]; then
+  if ! [[ "$count" =~ ^[0-9]+$ ]]; then
+    echo "Instance count for $host must be a non-negative integer." >&2
+    exit 1
+  fi
+
+  instances_by_host["$host"]="$count"
+  total_requested=$((total_requested + count))
+
+  if [ "$count" -gt "$suggested" ]; then
+    echo "Warning: $host only has capacity for about $suggested instances; launching $count anyway."
+  fi
+done
+
+if [ "$total_requested" -eq 0 ]; then
   echo "No instances requested."
   exit 0
 fi
@@ -164,8 +177,15 @@ wait_for_http() {
 }
 
 for host in "${launch_hosts[@]}"; do
+  instances_per_node="${instances_by_host[$host]:-0}"
   host_suggested="${suggested_by_host[$host]:-0}"
-  if [ "$host_suggested" -lt "$instances_per_node" ]; then
+
+  if [ "$instances_per_node" -eq 0 ]; then
+    echo "Skipping $host: 0 instances requested."
+    continue
+  fi
+
+  if [ "$host_suggested" -gt 0 ] && [ "$instances_per_node" -gt "$host_suggested" ]; then
     echo "Warning: $host only has capacity for about $host_suggested instances; launching $instances_per_node anyway."
   fi
 
@@ -205,6 +225,8 @@ done
 echo
 echo "Launched VMs:"
 for host in "${launch_hosts[@]}"; do
+  instances_per_node="${instances_by_host[$host]:-0}"
+  [ "$instances_per_node" -eq 0 ] && continue
   for ((i=1; i<=instances_per_node; i++)); do
     name="${VM_PREFIX}-${host#cloud03-}-${i}"
     if openstack server show "$name" >/dev/null 2>&1; then
