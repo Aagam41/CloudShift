@@ -31,21 +31,37 @@ IMAGE="$WORKDIR/loadtest.qcow2"
 cp "$BASE_IMAGE" "$IMAGE"
 qemu-img resize "$IMAGE" 10G
 
-cat > "$WORKDIR/vm-load.sh" <<'EOF'
-#!/bin/sh
-exec stress-ng --cpu "$(nproc)" --cpu-load 80 --timeout 0
-EOF
+cat > "$WORKDIR/vm-load.py" <<'PY'
+#!/usr/bin/env python3
+import os
+import threading
+import time
+
+# Keep every vCPU busy about 80% of the time without needing stress-ng.
+def worker():
+    while True:
+        start = time.monotonic()
+        while time.monotonic() - start < 0.8:
+            pass
+        time.sleep(0.2)
+
+for _ in range(os.cpu_count() or 1):
+    threading.Thread(target=worker, daemon=True).start()
+
+while True:
+    time.sleep(3600)
+PY
 
 cat > "$WORKDIR/vm-details.py" <<'PY'
 #!/usr/bin/env python3
 import http.server
 import json
+import os
 import platform
 import socket
+import subprocess
 import time
 from urllib.parse import urlparse
-
-import psutil
 
 COUNTER = 0
 MEMORY_BLOCKS = []
@@ -63,24 +79,64 @@ def cpu_model():
 
 def ip_addresses():
     addresses = []
-    for addrs in psutil.net_if_addrs().values():
-        for addr in addrs:
-            if addr.family == socket.AF_INET and not addr.address.startswith("127."):
-                addresses.append(addr.address)
+    try:
+        output = subprocess.check_output(
+            ["ip", "-4", "-o", "addr", "show"], text=True, stderr=subprocess.DEVNULL
+        )
+        for line in output.splitlines():
+            fields = line.split()
+            if "inet" in fields:
+                address = fields[fields.index("inet") + 1].split("/")[0]
+                if not address.startswith("127."):
+                    addresses.append(address)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        pass
     return sorted(set(addresses))
 
+def read_meminfo():
+    values = {}
+    with open("/proc/meminfo", encoding="utf-8") as f:
+        for line in f:
+            key, value = line.split(":", 1)
+            values[key] = int(value.split()[0])
+    return values
+
+def cpu_times():
+    with open("/proc/stat", encoding="utf-8") as f:
+        fields = f.readline().split()
+    values = [int(value) for value in fields[1:]]
+    idle = values[3] + (values[4] if len(values) > 4 else 0)
+    return idle, sum(values)
+
+def cpu_percent():
+    idle_before, total_before = cpu_times()
+    time.sleep(0.2)
+    idle_after, total_after = cpu_times()
+    delta_total = total_after - total_before
+    if delta_total <= 0:
+        return 0.0
+    delta_idle = idle_after - idle_before
+    return round(100.0 * (1 - delta_idle / delta_total), 1)
+
 def system_info():
-    mem = psutil.virtual_memory()
+    mem = read_meminfo()
+    total_kb = mem["MemTotal"]
+    available_kb = mem.get("MemAvailable", mem.get("MemFree", 0))
+    used_kb = total_kb - available_kb
+    percent = (used_kb / total_kb * 100) if total_kb else 0.0
+    with open("/proc/uptime", encoding="utf-8") as f:
+        uptime = int(float(f.read().split()[0]))
+
     return {
         "hostname": socket.gethostname(),
         "ips": ip_addresses(),
         "cpu_model": cpu_model(),
-        "vcpus": psutil.cpu_count(logical=True) or 1,
-        "cpu_percent": psutil.cpu_percent(interval=0.2),
-        "memory_total_mb": mem.total // (1024 * 1024),
-        "memory_used_mb": mem.used // (1024 * 1024),
-        "memory_percent": mem.percent,
-        "uptime_seconds": int(time.time() - psutil.boot_time()),
+        "vcpus": os.cpu_count() or 1,
+        "cpu_percent": cpu_percent(),
+        "memory_total_mb": total_kb // 1024,
+        "memory_used_mb": used_kb // 1024,
+        "memory_percent": round(percent, 1),
+        "uptime_seconds": uptime,
         "counter": COUNTER,
         "allocated_mib": len(MEMORY_BLOCKS),
     }
@@ -152,7 +208,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/vm-load.sh
+ExecStart=/usr/bin/python3 /usr/local/bin/vm-load.py
 Restart=always
 RestartSec=2
 
@@ -183,13 +239,11 @@ else
 fi
 
 "${SUDO[@]}" virt-customize -a "$IMAGE" \
-  --run-command 'rm -f /etc/resolv.conf && printf "nameserver 10.0.2.3\\n" > /etc/resolv.conf' \
-  --install python3,python3-psutil,stress-ng \
-  --upload "$WORKDIR/vm-load.sh:/usr/local/bin/vm-load.sh" \
+  --upload "$WORKDIR/vm-load.py:/usr/local/bin/vm-load.py" \
   --upload "$WORKDIR/vm-details.py:/usr/local/bin/vm-details.py" \
   --upload "$WORKDIR/vm-load.service:/etc/systemd/system/vm-load.service" \
   --upload "$WORKDIR/vm-web.service:/etc/systemd/system/vm-web.service" \
-  --run-command 'chmod 0755 /usr/local/bin/vm-load.sh /usr/local/bin/vm-details.py' \
+  --run-command 'chmod 0755 /usr/local/bin/vm-load.py /usr/local/bin/vm-details.py' \
   --run-command 'systemctl enable vm-load.service vm-web.service' \
   --ssh-inject root:file:"$SSH_KEY" \
   --root-password disabled
