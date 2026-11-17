@@ -47,16 +47,52 @@ done
 flavor_vcpus="$(openstack flavor show "$FLAVOR" -f value -c vcpus)"
 flavor_ram_mb="$(openstack flavor show "$FLAVOR" -f value -c ram)"
 
+TOKEN=$(openstack token issue -f value -c id)
+NOVA_URL=$(openstack endpoint list --service compute -f value -c URL | grep 10.0.10.100 | head -n 1)
+NOVA_URL="${NOVA_URL%/}"
+HYPERVISOR_JSON="$(mktemp)"
+trap 'rm -f "$HYPERVISOR_JSON"' EXIT
+
+curl -fsS -H "X-Auth-Token: $TOKEN" "$NOVA_URL/v2.1/os-hypervisors/detail" -o "$HYPERVISOR_JSON"
+
+capacity_for_host() {
+  python3 - "$1" "$HYPERVISOR_JSON" <<'PY'
+import json
+import sys
+
+host = sys.argv[1]
+with open(sys.argv[2], encoding="utf-8") as f:
+    data = json.load(f)
+
+for hypervisor in data.get("hypervisors", []):
+    if (hypervisor.get("hypervisor_hostname") == host
+            and hypervisor.get("state") == "up"
+            and hypervisor.get("status") == "enabled"):
+        print(
+            hypervisor["vcpus"] - hypervisor["vcpus_used"],
+            hypervisor["memory_mb"] - hypervisor["memory_mb_used"],
+        )
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
 echo "Compute capacity and suggested instances per node:"
 echo
 
 suggested_global=999999
 declare -A suggested_by_host
+launch_hosts=()
 
 for host in $COMPUTE_HOSTS; do
-  stats="$(openstack hypervisor show "$host" -f json)"
-  free_vcpus="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(max(0, d["vcpus"] - d["vcpus_used"]))' <<<"$stats")"
-  free_ram_mb="$(python3 -c 'import json,sys; d=json.load(sys.stdin); print(max(0, d["memory_mb"] - d["memory_mb_used"]))' <<<"$stats")"
+  if capacity="$(capacity_for_host "$host" 2>/dev/null)"; then
+    read -r free_vcpus free_ram_mb <<<"$capacity"
+  else
+    echo "  $host: not registered or not up; skipping"
+    suggested_by_host["$host"]=0
+    continue
+  fi
 
   usable_ram_mb=$(( free_ram_mb * 9 / 10 ))
   cpu_suggested="$free_vcpus"
@@ -66,7 +102,14 @@ for host in $COMPUTE_HOSTS; do
     suggested=0
   fi
 
+  if [ "$suggested" -eq 0 ]; then
+    echo "  $host: $free_vcpus free vCPUs, $((free_ram_mb / 1024)) MiB free RAM -> no free capacity; skipping"
+    suggested_by_host["$host"]=0
+    continue
+  fi
+
   suggested_by_host["$host"]="$suggested"
+  launch_hosts+=("$host")
   if [ "$suggested" -lt "$suggested_global" ]; then
     suggested_global="$suggested"
   fi
@@ -75,6 +118,11 @@ for host in $COMPUTE_HOSTS; do
 done
 
 echo
+if [ "${#launch_hosts[@]}" -eq 0 ]; then
+  echo "No compute hosts have free capacity."
+  exit 0
+fi
+
 if [ "$suggested_global" -eq 999999 ] || [ "$suggested_global" -lt 1 ]; then
   suggested_global=1
 fi
@@ -115,7 +163,7 @@ wait_for_http() {
   return 1
 }
 
-for host in $COMPUTE_HOSTS; do
+for host in "${launch_hosts[@]}"; do
   host_suggested="${suggested_by_host[$host]:-0}"
   if [ "$host_suggested" -lt "$instances_per_node" ]; then
     echo "Warning: $host only has capacity for about $host_suggested instances; launching $instances_per_node anyway."
@@ -156,7 +204,7 @@ done
 
 echo
 echo "Launched VMs:"
-for host in $COMPUTE_HOSTS; do
+for host in "${launch_hosts[@]}"; do
   for ((i=1; i<=instances_per_node; i++)); do
     name="${VM_PREFIX}-${host#cloud03-}-${i}"
     if openstack server show "$name" >/dev/null 2>&1; then

@@ -28,4 +28,3 @@ openstack keypair create --public-key "$PUB_FILE" "$KEY_NAME"
 echo "Local private key: $KEY_FILE"
 echo "Local public key:  $PUB_FILE"
 echo "OpenStack keypair: $KEY_NAME"
-EOF

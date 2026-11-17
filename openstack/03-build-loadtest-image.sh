@@ -271,4 +271,3 @@ openstack image create "$IMAGE_NAME" \
   --public
 
 echo "Uploaded image: $IMAGE_NAME"
-EOF
