@@ -175,7 +175,14 @@ RestartSec=2
 WantedBy=multi-user.target
 EOF
 
-virt-customize -a "$IMAGE" \
+# libguestfs needs to read the host kernel, which is root-only on Ubuntu.
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=()
+else
+  SUDO=(sudo)
+fi
+
+"${SUDO[@]}" virt-customize -a "$IMAGE" \
   --install python3,python3-psutil,stress-ng \
   --upload "$WORKDIR/vm-load.sh:/usr/local/bin/vm-load.sh" \
   --upload "$WORKDIR/vm-details.py:/usr/local/bin/vm-details.py" \
@@ -186,7 +193,13 @@ virt-customize -a "$IMAGE" \
   --ssh-inject root:file:"$SSH_KEY" \
   --root-password disabled
 
-virt-sysprep -a "$IMAGE"
+"${SUDO[@]}" virt-sysprep -a "$IMAGE"
+
+# Keep the resulting image owned by the invoking user so the later OpenStack
+# upload does not require root privileges.
+if [ "$(id -u)" -ne 0 ]; then
+  sudo chown "$(id -u):$(id -g)" "$IMAGE"
+fi
 
 source ~/kolla-venv/bin/activate
 source /etc/kolla/admin-openrc.sh
