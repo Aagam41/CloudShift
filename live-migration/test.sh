@@ -5,7 +5,7 @@ set -euo pipefail
 source ~/kolla-venv/bin/activate
 source /etc/kolla/admin-openrc.sh
 HERE="$(cd "$(dirname "$0")" && pwd)"
-A="${1:-cloud03-compute01}"; B="${2:-cloud03-compute02}"
+A="${1:-cloud03-compute01}"; B="${2:-cloud03-compute03}"
 
 python3 "$HERE/migrate.py" --list
 openstack server create --image cirros --flavor m1.small --network private-net \
