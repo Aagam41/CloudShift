@@ -183,6 +183,7 @@ else
 fi
 
 "${SUDO[@]}" virt-customize -a "$IMAGE" \
+  --run-command 'rm -f /etc/resolv.conf && printf "nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n" > /etc/resolv.conf' \
   --install python3,python3-psutil,stress-ng \
   --upload "$WORKDIR/vm-load.sh:/usr/local/bin/vm-load.sh" \
   --upload "$WORKDIR/vm-details.py:/usr/local/bin/vm-details.py" \
