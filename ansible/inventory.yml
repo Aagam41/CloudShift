@@ -6,12 +6,28 @@ all:
   children:
     control:
       hosts:
-        cloud03-controller01: {ansible_host: 192.168.0.11, host_id: 11, nic: eno1}
+        cloud03-controller01:
+          ansible_host: 192.168.0.11
+          host_id: 11
+          nic: eno1
+          bootstrap_user: cloud03-compute01
     compute:
       hosts:
-        cloud03-compute01: {ansible_host: 192.168.0.21, host_id: 21, nic: eno1}
-        cloud03-compute02: {ansible_host: 192.168.0.22, host_id: 22, nic: eno1}
-        cloud03-compute03: {ansible_host: 192.168.0.23, host_id: 23, nic: eno1}
+        cloud03-compute01:
+          ansible_host: 192.168.0.21
+          host_id: 21
+          nic: eno1
+          bootstrap_user: cloud03-compute02
+        cloud03-compute02:
+          ansible_host: 192.168.0.22
+          host_id: 22
+          nic: eno1
+          bootstrap_user: cloud03-control01
+        cloud03-compute03:
+          ansible_host: 192.168.0.23
+          host_id: 23
+          nic: eno1
+          bootstrap_user: cloud03
     gateway:
       hosts:
         cloud03-controller01: {wifi_if: enx629176816cc5, gw_priority: 150}

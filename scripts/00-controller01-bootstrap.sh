@@ -21,16 +21,16 @@ PLAYBOOK="00-create-ansible-user.yml"
 export BOOTSTRAP_USER="${1:-$USER}"
 
 echo "======================================"
-echo " Copying SSH keys to all nodes (user: $BOOTSTRAP_USER)"
+echo " Copying SSH keys to all nodes"
 echo "======================================"
 
-# Addresses and users come from inventory.yml
+# Addresses and users come from inventory.yml (bootstrap_user)
 ansible-inventory -i "$INVENTORY" --list | python3 -c '
-import json, sys, os
-user = os.environ.get("BOOTSTRAP_USER", "ubuntu")
+import json, sys
 inv = json.load(sys.stdin)["_meta"]["hostvars"]
 for h, v in inv.items():
-    print(user + "@" + v["ansible_host"])
+    user = v.get("bootstrap_user", "ubuntu")
+    print(f"{user}@{v[\"ansible_host\"]}")
 ' | sort -u | while read -r target; do
 
     echo "== $target"
@@ -43,7 +43,7 @@ echo " Creating ansible user on all nodes"
 echo "======================================"
 
 # Run user creation playbook with sudo password prompt
-ansible-playbook -i "$INVENTORY" -e "ansible_user=$BOOTSTRAP_USER" --private-key ~/.ssh/id_ed25519 "$PLAYBOOK" -K
+ansible-playbook -i "$INVENTORY" --private-key ~/.ssh/id_ed25519 "$PLAYBOOK" -K
 
 echo ""
 echo "======================================"
