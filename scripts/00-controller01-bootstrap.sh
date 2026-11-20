@@ -25,16 +25,17 @@ echo " Copying SSH keys to all nodes"
 echo "======================================"
 
 # Addresses and users come from inventory.yml (bootstrap_user)
-ansible-inventory -i "$INVENTORY" --list | python3 -c '
+TARGETS=$(ansible-inventory -i "$INVENTORY" --list | python3 -c '
 import json, sys
 inv = json.load(sys.stdin)["_meta"]["hostvars"]
 for h, v in inv.items():
     user = v.get("bootstrap_user", "ubuntu")
     print(f"{user}@{v[\"ansible_host\"]}")
-' | sort -u | while read -r target; do
+' | sort -u)
 
+for target in $TARGETS; do
     echo "== $target"
-    ssh-copy-id -o StrictHostKeyChecking=accept-new "$target"
+    ssh-copy-id -o StrictHostKeyChecking=accept-new "$target" </dev/null || true
 done
 
 echo ""
