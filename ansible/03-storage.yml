@@ -54,12 +54,14 @@
       loop: "{{ groups['control'][1:] }}"
       register: probe
       changed_when: "'already' not in probe.stdout"
+      when: groups['control'] | length > 1
 
     - name: Probe the first controller by NAME from the second (peers otherwise know it only by IP)
       ansible.builtin.command: gluster --mode=script peer probe {{ groups['control'][0] }}-st
       delegate_to: "{{ groups['control'][1] }}"
       register: probe2
       changed_when: "'already' not in probe2.stdout"
+      when: groups['control'] | length > 1
 
     - name: Wait until all peers are connected
       ansible.builtin.shell: test "$(gluster peer status | grep -c 'Peer in Cluster (Connected)')" -eq {{ groups['control'] | length - 1 }}
@@ -68,6 +70,7 @@
       retries: 15
       delay: 4
       changed_when: false
+      when: groups['control'] | length > 1
 
     - name: Which volumes exist already?
       ansible.builtin.command: gluster volume info {{ item.key }}
@@ -76,9 +79,10 @@
       failed_when: false
       changed_when: false
 
-    - name: Create missing volumes (3 copies, or 2 copies + arbiter)
+    - name: Create missing volumes (3 copies, or 2 copies + arbiter, or single brick)
       ansible.builtin.command: >-
-        gluster --mode=script volume create {{ item.item.key }} replica 3 {{ 'arbiter 1' if gluster_arbiter else '' }}
+        gluster --mode=script volume create {{ item.item.key }}
+        {{ 'replica 3 ' ~ ('arbiter 1 ' if gluster_arbiter else '') if groups['control'] | length >= 3 else '' }}
         {% for h in groups['control'] %}{{ h }}-st:{{ gluster_brick_root }}/{{ item.item.key }}/brick {% endfor %}force
       loop: "{{ existing.results }}"
       when: item.rc != 0
@@ -86,6 +90,7 @@
     - name: Quorum options (a minority of controllers can never accept writes -> no split brain)
       ansible.builtin.command: gluster volume set {{ item.0.key }} {{ item.1 }}
       loop: "{{ gluster_volumes | dict2items | product(['cluster.quorum-type auto', 'cluster.server-quorum-type server']) | list }}"
+      when: groups['control'] | length >= 3
       changed_when: false
 
     - name: Does this Gluster version ship the "virt" tuning group?
@@ -157,7 +162,7 @@
         regexp: '\s{{ item.value.mount }}\s'
         line: >-
           {{ gluster_first }}:/{{ item.key }} {{ item.value.mount }} glusterfs
-          defaults,_netdev,backup-volfile-servers={{ gluster_backups }},x-systemd.mount-timeout=60{{ ',x-systemd.requires=glusterd.service' if inventory_hostname in groups['control'] else '' }} 0 0
+          defaults,_netdev{{ (',backup-volfile-servers=' ~ gluster_backups) if gluster_backups else '' }},x-systemd.mount-timeout=60{{ ',x-systemd.requires=glusterd.service' if inventory_hostname in groups['control'] else '' }} 0 0
       loop: "{{ mounts }}"
 
     - name: docker.service.d directory
