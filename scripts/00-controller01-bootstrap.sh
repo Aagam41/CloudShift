@@ -30,7 +30,8 @@ import json, sys
 inv = json.load(sys.stdin)["_meta"]["hostvars"]
 for h, v in inv.items():
     user = v.get("bootstrap_user", "ubuntu")
-    print(f"{user}@{v[\"ansible_host\"]}")
+    host = v["ansible_host"]
+    print(user + "@" + str(host))
 ' | sort -u)
 
 for target in $TARGETS; do
