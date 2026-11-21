@@ -137,6 +137,13 @@
       failed_when: false
       changed_when: false
 
+    - name: Clear a stale immutable flag left by a previous failed mount
+      ansible.builtin.command: chattr -i {{ item.item.value.mount }}
+      loop: "{{ mounted.results }}"
+      when: item.rc != 0
+      failed_when: false
+      changed_when: false
+
     - name: Mount point directories
       ansible.builtin.file:
         path: "{{ item.item.value.mount }}"
