@@ -7,6 +7,7 @@
       [ -e "$f" ] || continue
       b=$(basename "$f")
       [ "$b" = "01-network-manager-all.yaml" ] && continue
+      [ "$b" = "01-netcfg.yaml" ] && continue
       [ "$b" = "60-cloud03-vlans.yaml" ] && continue
       if ! grep -q -- "{{ nic }}" "$f"; then
         if [ -z "$wifi_if" ] || ! grep -q -- "$wifi_if" "$f"; then
@@ -25,6 +26,7 @@
         b=$(basename "$f")
         [ "$b" = "50-cloud-init.yaml" ] && continue
         [ "$b" = "01-network-manager-all.yaml" ] && continue
+        [ "$b" = "01-netcfg.yaml" ] && continue
         [ "$b" = "60-cloud03-vlans.yaml" ] && continue
         if grep -q -- "{{ nic }}" "$f"; then nic_elsewhere=1; fi
         if [ -n "$wifi_if" ] && grep -q -- "$wifi_if" "$f"; then wifi_elsewhere=1; fi
