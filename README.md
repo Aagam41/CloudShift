@@ -19,6 +19,7 @@ All in-depth architectural guides, troubleshooting logs, and step-by-step runboo
 5. [**KOLLA_ANSIBLE_INSTALL_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/KOLLA_ANSIBLE_INSTALL_GUIDE.md): Deployment virtual environment (`kolla-venv`), cryptographic credential generation (`kolla-genpwd`), and multinode inventory synthesis.
 6. [**OPENSTACK_DEPLOYED_ARCHITECTURE_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/OPENSTACK_DEPLOYED_ARCHITECTURE_GUIDE.md): In-depth breakdown of every deployed container (MariaDB, RabbitMQ, Keystone, Nova, Neutron, Glance, Horizon, Ceilometer, Gnocchi, CloudKitty, Prometheus).
 7. [**POST_DEPLOYMENT_RESOURCES_AND_LIVE_MIGRATION_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/POST_DEPLOYMENT_RESOURCES_AND_LIVE_MIGRATION_GUIDE.md): Cloud setup (`01-cloud-setup.sh`), metric exporters (`05-exporter.yml`), billing rates (`02-billing-rates.sh`), and live migration verification.
+8. [**VM_LIFECYCLE_AND_MANAGEMENT_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/VM_LIFECYCLE_AND_MANAGEMENT_GUIDE.md): Automated multi-node bulk instance provisioning scripts (4 VMs per node), selective/per-host/full teardown scripts, floating IP attachment, and quota management.
 
 ---
 
