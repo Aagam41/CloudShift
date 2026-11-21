@@ -102,6 +102,15 @@
       ansible.builtin.shell: chmod -f 0600 /etc/netplan/*.yaml /etc/netplan/*.yml || true
       changed_when: false
 
+    - name: Remove legacy vlan interfaces if present
+      ansible.builtin.shell: |
+        for iface in vlan10 vlan20 vlan30 vlan40 vlan50 vlan60 vlan70; do
+          if ip link show "$iface" >/dev/null 2>&1; then
+            ip link delete "$iface"
+          fi
+        done
+      changed_when: false
+
     - name: VLAN netplan file
       ansible.builtin.template:
         src: netplan.yaml.j2
