@@ -17,7 +17,7 @@ all:
           ansible_host: 192.168.0.21
           host_id: 21
           nic: eno1
-          bootstrap_user: cloud03-compute01
+          bootstrap_user: cloud03-compute02
         cloud03-compute02:
           ansible_host: 192.168.0.22
           host_id: 22
