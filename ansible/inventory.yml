@@ -30,4 +30,4 @@ all:
           bootstrap_user: cloud03
     gateway:
       hosts:
-        cloud03-controller01: {wifi_if: enx629176816cc5, gw_priority: 150}
+        cloud03-controller01: {wifi_if: enx522f1af8028a, gw_priority: 150}
