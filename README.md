@@ -1,133 +1,174 @@
-# Cloud03: 8-node OpenStack (Kolla-Ansible) lab, no single controller
+# CloudShift: 4-Node High-Performance OpenStack Lab
 
-Built on your `openstack-kolla-lab-kit` (same hostnames, VLAN numbers, VIPs and host IDs), completed so you can deploy.
-What changed and why: `docs/CHANGES-FROM-KIT.md`. What survives which failure: **`docs/HA.md`**.
+Enterprise containerized OpenStack private cloud lab running across 4 physical bare-metal nodes (1 Controller + 3 Compute Hypervisors) connected via an L2 smart managed switch. 
+
+Orchestrated using **Ansible** and **Kolla-Ansible** (2026.1 / Epoxy release on Ubuntu), featuring 7 tagged 802.1Q isolated VLANs, GlusterFS distributed shared storage, autonomous software-defined networking (Neutron), full telemetry, Grafana observability dashboards, CloudKitty billing rating rules, and automated zero-downtime live migration.
+
+---
+
+## 📚 Complete Project Documentation Reference
+
+All in-depth architectural guides, troubleshooting logs, and step-by-step runbooks for this deployment have been compiled and published to the documentation repository:
+👉 **[https://github.com/Yashshah025/files](https://github.com/Yashshah025/files)**
+
+### Core Documentation Index:
+1. [**SWITCH_CONFIGURATION_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/SWITCH_CONFIGURATION_GUIDE.md): Physical L2 switch setup (D-Link DGS-1210-28), 802.1Q trunking, PVID 1 untagged management, Spanning Tree (RSTP), and port mapping.
+2. [**CLUSTER_BOOTSTRAP_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/CLUSTER_BOOTSTRAP_GUIDE.md): Multi-user SSH key distribution, passwordless sudo configuration, and hostnames contract.
+3. [**STORAGE_ARCHITECTURE_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/STORAGE_ARCHITECTURE_GUIDE.md): Dedicated secondary drive partitioning (`/dev/sdb`), XFS formatting, GlusterFS volumes (`nova`, `glance`, `gnocchi`), and immutable mount security (`+i`).
+4. [**SITE_PROVISIONING_AND_VERIFICATION_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/SITE_PROVISIONING_AND_VERIFICATION_GUIDE.md): Stage-by-stage analysis of `site.yml` (VLAN carving, Keepalived VRRP gateway, NAT masquerading, `dnsmasq`, and full mesh verification).
+5. [**KOLLA_ANSIBLE_INSTALL_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/KOLLA_ANSIBLE_INSTALL_GUIDE.md): Deployment virtual environment (`kolla-venv`), cryptographic credential generation (`kolla-genpwd`), and multinode inventory synthesis.
+6. [**OPENSTACK_DEPLOYED_ARCHITECTURE_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/OPENSTACK_DEPLOYED_ARCHITECTURE_GUIDE.md): In-depth breakdown of every deployed container (MariaDB, RabbitMQ, Keystone, Nova, Neutron, Glance, Horizon, Ceilometer, Gnocchi, CloudKitty, Prometheus).
+7. [**POST_DEPLOYMENT_RESOURCES_AND_LIVE_MIGRATION_GUIDE.md**](https://github.com/Yashshah025/files/blob/main/POST_DEPLOYMENT_RESOURCES_AND_LIVE_MIGRATION_GUIDE.md): Cloud setup (`01-cloud-setup.sh`), metric exporters (`05-exporter.yml`), billing rates (`02-billing-rates.sh`), and live migration verification.
+
+---
+
+## 🏛️ Physical & Network Topology
 
 ```
-                       Wi-Fi (your home network 192.168.1.0/24)
-                 ,---------------+---------------.
-        contorller01      contorller02      contorlcompute       <- the 3 controllers: ALL services on ALL of them
-        (gateway cand.)   (gateway cand.)   (gateway cand. + also a compute node)
-                 `---------------+---------------'
-      TP-Link switch: every port a trunk with VLANs 10 20 30 40 50 60 70
-                 .---------------+---------------.
-        compute01  compute02  compute03  compute04  compute05
+                         Uplink / Internet (USB Tethering 10.72.247.x)
+                                              |
+                                   +----------------------+
+                                   | cloud03-controller01 |
+                                   | • Control Plane APIs |
+                                   | • GlusterFS Storage  |
+                                   | • Keepalived Gateway |
+                                   +----------------------+
+                                              |
+                          D-Link DGS-1210-28 Managed Switch
+                    Trunk Ports 1-4: 802.1Q Tagged VLANs (10 - 70)
+                                              |
+            +---------------------------------+---------------------------------+
+            |                                 |                                 |
+  +-------------------+             +-------------------+             +-------------------+
+  | cloud03-compute01 |             | cloud03-compute02 |             | cloud03-compute03 |
+  | (Port 2: .21)     |             | (Port 3: .22)     |             | (Port 4: .23)     |
+  | • nova-compute    |             | • nova-compute    |             | • nova-compute    |
+  | • nova-libvirt    |             | • nova-libvirt    |             | • nova-libvirt    |
+  | • neutron-ovs     |             | • neutron-ovs     |             | • neutron-ovs     |
+  +-------------------+             +-------------------+             +-------------------+
+            \                                 |                                 /
+             +--------------------------------+--------------------------------+
+                                              |
+                       Shared Storage Volume: /var/lib/nova-shared (GlusterFS)
 ```
 
-| VLAN | Subnet | Purpose |
-|---|---|---|
-| 10 MGMT | 10.0.10.0/24 (VIP .100) | API, RabbitMQ, MariaDB, live-migration traffic |
-| 20 STORAGE | 10.0.20.0/24 | GlusterFS: 3 copies of VM disks, images, telemetry |
-| 30 TUNNEL | 10.11.10.0/24 | VXLAN tenant networks |
-| 40 API | **10.14.40.0/24** (VIP .100) | External VIP, Horizon, Grafana (controllers). Moved off 192.168.1.0/24 (your Wi-Fi) |
-| 50 EGRESS | 10.12.0.0/24 (.1 floating) | Internet: every node's default route -> floating gateway |
-| 60 PROVIDER | 172.24.4.0/24 (.1 floating) | Floating IPs; gateway follows the Internet gateway |
-| 70 DNS | 10.0.70.0/24 | lab DNS on all three controllers (.11 .12 .13) |
+### Network & VLAN Segmentation
 
-Host address = `<subnet>.<id>`: controller01 .11, controller02 .12, contorlcompute .13, compute01-05 .21-.25.
-(Physical/Ansible network 192.168.0.0/24 stays as in your kit.)
+| VLAN Tag | Interface | Subnet Range | Gateway / VIP | Primary Purpose |
+|:---|:---|:---|:---|:---|
+| **VLAN 10** | `mgmt` | `10.0.10.0/24` | `10.0.10.100` (VIP) | Internal APIs, MariaDB Galera, RabbitMQ, Nova RPC & Live Migration |
+| **VLAN 20** | `storage` | `10.0.20.0/24` | — | Dedicated GlusterFS storage transport |
+| **VLAN 30** | `tunnel` | `10.11.10.0/24` | — | Neutron VXLAN overlay networks for tenant instances |
+| **VLAN 40** | `api` | `10.14.40.0/24` | `10.14.40.100` (VIP) | Public API endpoints, Horizon Web UI & Grafana |
+| **VLAN 50** | `egress` | `10.12.0.0/24` | `10.12.0.1` (VRRP) | Compute nodes default route & NAT masquerade to Internet |
+| **VLAN 60** | `provider` | `172.24.4.0/24` | `172.24.4.1` (br-ex) | External floating IP pool (`172.24.4.100` – `.199`) |
+| **VLAN 70** | `dns` | `10.0.70.0/24` | `10.0.70.11` | Centralized cluster DNS (`dnsmasq` for `cloud03.lab`) |
+| **Native 1** | `eno1` | `192.168.0.0/24` | — | Bare-metal bootstrap & out-of-band management |
 
-## Before you start: confirm these
-1. `ansible/inventory.yml`: `ansible_user`, `nic` per host (`ip -br link`), and `wifi_if` for each controller **that has a Wi-Fi adapter**
-   (group `gateway`; delete the line of a controller without Wi-Fi, see `docs/HA.md`).
-2. Each node's `hostname` equals the inventory name exactly (including "contorller"). Preflight checks this.
-3. Your home Wi-Fi is 192.168.1.0/24: that no longer clashes with anything. Preflight verifies it against every lab subnet.
-4. Each node's existing netplan keeps its 192.168.0.x address and has NO default route on it (the lab default route is via VLAN 50).
-5. **Disk space on the three controllers.** Every VM disk, image and metric is stored 3 times, once per controller, under
-   `/srv/gluster`. If a controller has a spare data disk or unallocated space, run step 4a (`./scripts/storage-manager.sh <controller>`)
-   to discover the storage, choose a device or partition, and prepare `/srv/gluster` interactively.
-6. RAM: each controller runs the full control plane + telemetry + monitoring, so 16 GB+ each (more for `contorlcompute` if it hosts VMs).
+---
 
-## Steps (about 1-2 hours plus image downloads)
+## 🚀 Step-by-Step Deployment Runbook
 
-| # | Where | Command |
-|---|---|---|
-| 1 | Switch | `switch/switch-vlans.md` (7 VLANs, tagged on ports 1-8) |
-| 2 | controller01 | `scripts/00-controller01-bootstrap.sh`  (Ansible + SSH keys to all nodes) |
-| 3 | controller01 | `cd ansible && ansible-playbook 00-preflight.yml -K`  (read-only; fix what it reports) |
-| 4 | controller01 | `scripts/cpu-check.sh`  (CPU model for live migration; edit `kolla/config/nova/nova-compute.conf` if told) |
-| 4a | controller01 | `./scripts/storage-manager.sh controller01`  (interactive storage discovery and selection; creates `/tmp/controller01-gluster-extra-vars.json`) |
-| 4b | controller01 | `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml`  (applies pending `/srv/gluster` configurations) |
-| 5 | controller01 | `cd ansible && ansible-playbook site.yml -K`  (VLANs, floating gateway, DNS, GlusterFS, then verifies all of it) |
-| 6 | controller01 | `kolla/install.sh`  (the inventory check must show the 3 controllers on every line) |
-| 7 | controller01 | `kolla/deploy.sh`  (bootstrap, prechecks, **pause**, deploy, post-deploy) |
-| 8 | controller01 | `openstack/01-cloud-setup.sh`  (networks, router, image, flavors) |
-| 9 | controller01 | `cd ansible && ansible-playbook 05-exporter.yml -K`  then  `openstack/02-billing-rates.sh` |
-| 10 | controller01 | `live-migration/test.sh`  (boots a VM on compute01, migrates to compute02 and back) |
-| 11 | controller01 | `scripts/sync-deploy-host.sh`  (so another controller can take over deploying; see `docs/HA.md`) |
+### Phase 1: Bare-Metal Bootstrap & Preflight
+Run from `cloud03-controller01`:
+```bash
+# 1. Distribute SSH keys and provision user 'ansible'
+./scripts/00-controller01-bootstrap.sh
 
-Steps 3 and 5 stop with a clear message at the first problem; re-running any playbook is safe.
-Then open Grafana (`docs/ACCESS.md`): seven dashboards are already there. Run the failure drills in `docs/HA.md` once.
-
-## Interactive storage preparation (`storage-manager.sh`)
-`./scripts/storage-manager.sh controller01` discovers all disks, partitions, mounts and unallocated space on that controller,
-displays them as tables, and asks you to choose:
-
-- a physical disk with unallocated space (create a partition using all of it or a custom size such as `250G` or `1.5T`);
-- an unmounted partition (format it as XFS, or preserve its filesystem);
-- the current `/srv/gluster` partition (keep it or reformat it);
-- another mounted data partition (advanced: repurpose it for `/srv/gluster` after confirmation).
-
-Nothing is changed during discovery. Formatting, repurposing and partition creation always ask for explicit
-confirmation, and `/etc/fstab` is backed up before any change. The script prepares one controller per run and writes
-`/tmp/<controller>-gluster-extra-vars.json`; repeat it for `controller02`, `controller03`, and so on. After all
-controllers are prepared, run `cd ansible && ansible-playbook 03a-prepare-glusterfs.yml` to apply the pending
-configurations.
-
-## Live migration
+# 2. Run read-only preflight verification
+cd ansible
+ansible-playbook 00-preflight.yml
 ```
-~/kolla-venv/bin/python live-migration/migrate.py --list                    # hosts and VM counts
-~/kolla-venv/bin/python live-migration/migrate.py web1                      # to the least-loaded host
-~/kolla-venv/bin/python live-migration/migrate.py web1 --to cloud03-compute03
-~/kolla-venv/bin/python live-migration/migrate.py --drain cloud03-compute01 # empty a host for maintenance
+
+### Phase 2: Foundation Provisioning (`site.yml`)
+Configures all 7 VLAN interfaces, Keepalived floating gateway, NAT masquerading, `dnsmasq`, GlusterFS shared storage, and executes automated verification checks:
+```bash
+cd ~/Cloud-Project/ansible
+ansible-playbook site.yml
 ```
-`live-migration/scheduler.py` is an example loop (busiest -> idlest node by CPU): put your algorithm in `pick_vm()` / `check()`;
-`migrate.py` already handles the Nova call, waiting, errors and rollback detection. Starts in `dry_run: true`.
-It can run on any controller (it talks to the API VIP).
 
-## Clients, usage and billing
-- New client: `openstack/03-onboard-client.sh acme 'Password123'`
-- Prices: edit then run `openstack/02-billing-rates.sh` (credits per hour, per flavor / GiB / floating IP / MB)
-- Grafana dashboards: **Cluster overview**, **Compute and VMs**, **Projects and usage**, **Billing**, **Live migration and balance**,
-  **Platform health**, **OpenStack resources**. Edit `monitoring/make_dashboards.py`, run it, then `kolla-ansible reconfigure -t grafana -i ~/multinode`.
-- Monthly invoice per client: `~/kolla-venv/bin/python scripts/invoice.py --month 2026-10`
-- Billing data starts after CloudKitty's first full hourly period. CloudKitty rates usage; it is not a payment system.
+### Phase 3: Kolla-Ansible Installation & Deployment
+```bash
+# 1. Create venv, generate passwords, and build multinode inventory
+cd ~/Cloud-Project
+kolla/install.sh
 
-## Where things run
-| Service | Nodes |
-|---|---|
-| Keystone, Nova, Neutron, Glance, Horizon, Gnocchi, Ceilometer, CloudKitty, MariaDB, RabbitMQ, Valkey, HAProxy+Keepalived | all 3 controllers |
-| Prometheus (active + 2 standby), Grafana, Alertmanager (cluster), cloud-exporter | all 3 controllers |
-| dnsmasq (DNS), GlusterFS server (3 copies) | all 3 controllers |
-| Internet gateway (floating 10.12.0.1 / 172.24.4.1) | whichever healthy controller with Wi-Fi wins the VRRP election |
-| nova-compute, libvirt, Ceilometer compute agent | contorlcompute + compute01-05 |
+# 2. Deploy containerized OpenStack
+kolla/deploy.sh
+```
 
-## What is verified, and what is not
-Tested here before delivery: all 7 playbooks pass `ansible-playbook --syntax-check`; every template renders with real Ansible for
-all 8 hosts; the generated **keepalived** configs pass the real keepalived 2.2.8 `--config-test` (3-gateway and 1-gateway layouts)
-and the **dnsmasq** configs pass dnsmasq 2.91 `--test` (the exact Ubuntu 24.04 versions); the Kolla inventory merge puts every
-service on the 3 controllers (tested against kolla-ansible's own sample); every Kolla variable and the multi-node behaviour of
-Glance/Gnocchi/Ceilometer/CloudKitty/Prometheus/Grafana was read from kolla-ansible 23.0.0's source; `migrate.py`, `scheduler.py`
-and the exporter pass fake-cluster tests; all 87 dashboard queries parse and 65 return data on a real Prometheus 3.5 against fake
-metrics (0 errors).
+### Phase 4: Cloud Resources Initialization
+Provisions external `provider-net`, tenant `private-net`, router `r1`, uploads `cirros` to Glance, creates flavors (`m1.tiny`, `m1.small`, `m1.medium`, `m1.large`), and opens security rules:
+```bash
+cd ~/Cloud-Project
+openstack/01-cloud-setup.sh
+```
 
-**Not tested (needs your hardware):** the real deployment, netplan on your NICs, the switch commands, **GlusterFS** (the commands
-follow public documentation and Gluster's own docs but were not run), actual VRRP failover, live migration on real VMs, and
-Grafana rendering. Specifically watch: GlusterFS write speed (3x write amplification, `docs/HA.md`); the Ceilometer coordination
-line (`kolla/config/ceilometer/ceilometer-central.conf` uses Kolla's Valkey URL; if deploy complains, delete that file: the only
-effect is 3x duplicate polling); dashboard panels in **OpenStack resources** showing "No data" (exporter metric names differ by
-release); the CloudKitty CLI column names in `02-billing-rates.sh`; the `stable/2026.1` branch name (`RELEASE=2026.2 kolla/install.sh`
-if it fails).
+### Phase 5: Observability, Telemetry & Billing Setup
+```bash
+# 1. Deploy Prometheus metrics exporter
+cd ~/Cloud-Project/ansible
+ansible-playbook 05-exporter.yml
 
-## Troubleshooting
-| Symptom | Look at |
-|---|---|
-| Node has no Internet | which controller holds 10.12.0.1: `ip -br a show egress` on each; `journalctl -u lab-keepalived`; `systemctl status lab-gateway` |
-| Nobody holds 10.12.0.1 | `/usr/local/sbin/gw-check.sh; echo $?` on a gateway controller (0 = its Wi-Fi reaches the Internet) |
-| Names don't resolve | `systemctl status dnsmasq`, `dig @10.0.70.11 cloud03-compute01` (try .12 and .13) |
-| VMs have no Internet | `ip -br a show br-ex` on the gateway master must show 172.24.4.1 (`systemctl status provider-gateway`) |
-| Live migration "CPU incompatible" | `cpu_models` in nova-compute.conf, then `kolla-ansible reconfigure -t nova -i ~/multinode` |
-| Nova/Glance/Gnocchi won't start | `findmnt /var/lib/nova-shared` etc. (GlusterFS must be mounted; the unmounted directory is immutable on purpose), `gluster peer status` |
-| Storage slow or degraded | `sudo gluster volume heal nova info`, `sudo gluster volume status` |
-| Prometheus 401 | user `admin`, `prometheus_password` from `/etc/kolla/passwords.yml` |
-| Billing dashboard empty | `openstack rating summary get`, rates configured?, `journalctl -u cloud-exporter -n 30` |
+# 2. Configure CloudKitty rating engine pricing rules
+cd ~/Cloud-Project
+openstack/02-billing-rates.sh
+
+# 3. Generate and deploy Grafana dashboards
+cd ~/Cloud-Project/monitoring
+python3 make_dashboards.py
+sudo cp -a ~/Cloud-Project/kolla/config/grafana/dashboards/. /etc/kolla/config/grafana/dashboards/
+source ~/kolla-venv/bin/activate
+kolla-ansible reconfigure -t grafana -i ~/multinode
+```
+
+---
+
+## ⚡ Zero-Downtime Live Migration & Load Balancing
+
+### 1. Manual / Targeted Live Migration
+Because VM disks reside on `/var/lib/nova-shared` (GlusterFS direct I/O), migrations execute with `block_migration=False`. Only CPU registers and RAM pages transfer across VLAN 10 (`mgmt`):
+```bash
+source ~/kolla-venv/bin/activate
+source /etc/kolla/admin-openrc.sh
+
+# Live-migrate instance to a specific target host:
+python3 live-migration/migrate.py <VM_NAME> --to cloud03-compute02
+
+# Drain a compute node before hardware maintenance:
+python3 live-migration/migrate.py --drain cloud03-compute01
+```
+
+### 2. Autonomous Dynamic Load-Balancing Scheduler (`scheduler.py`)
+Runs as an autonomous optimization daemon:
+* **Metric Ingestion:** Continuously samples hypervisor CPU utilization from Prometheus.
+* **Imbalance Detection:** Triggers when $\Delta_{CPU} = \text{CPU}_{busiest} - \text{CPU}_{idlest} \ge \text{threshold}$ (e.g. 15%).
+* **Selection Algorithm:** Analyzes `libvirt_domain_info_cpu_time_seconds_total` across all instances on the busy host and selects the VM whose CPU load is closest to $\frac{\Delta_{CPU}}{2}$, leveling both hosts without flipping the imbalance.
+* **Execution:** Initiates a live migration with zero packet loss and imposes a stabilization cooldown.
+
+```bash
+# Edit configuration parameters:
+nano live-migration/config.yaml
+
+# Run the scheduler:
+~/kolla-venv/bin/python live-migration/scheduler.py
+```
+
+---
+
+## 📊 Access & Dashboards
+
+* **Horizon Dashboard (OpenStack Web Console):**
+  * **URL:** `http://10.14.40.100` (or `http://10.0.10.11`)
+  * **Domain:** `Default` | **User:** `admin`
+  * **Password:** `grep 'keystone_admin_password:' /etc/kolla/passwords.yml`
+* **Grafana Dashboards:**
+  * **URL:** `http://10.14.40.100:3000`
+  * **User:** `admin`
+  * **Password:** `grep 'grafana_admin_password:' /etc/kolla/passwords.yml`
+  * **Included Dashboards:** Cluster Overview, Compute and VMs, Platform Health, Live Migration & Balance, OpenStack Resources, CloudKitty Billing, Projects & Usage.
+* **Monthly Client Invoicing:**
+  ```bash
+  ~/kolla-venv/bin/python scripts/invoice.py --month 2026-11 --out invoice.csv
+  cat invoice.csv
+  ```
