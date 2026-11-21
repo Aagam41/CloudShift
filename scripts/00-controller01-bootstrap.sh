@@ -36,7 +36,7 @@ for h, v in inv.items():
 
 for target in $TARGETS; do
     echo "== $target"
-    ssh-copy-id -o StrictHostKeyChecking=accept-new "$target" </dev/null || true
+    ssh-copy-id -o StrictHostKeyChecking=accept-new "$target"
 done
 
 echo ""
