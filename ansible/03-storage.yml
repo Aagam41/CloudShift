@@ -101,13 +101,13 @@
     - name: VM-image tuning (O_DIRECT, no read-ahead caching, sharding)
       ansible.builtin.command: gluster volume set {{ item.key }} group virt
       loop: "{{ gluster_volumes | dict2items | selectattr('value.virt', 'defined') | list }}"
-      when: virtgroup.stat.exists
+      when: virtgroup.stat.exists and (groups['control'] | length >= 3)
       changed_when: false
 
     - name: Same tuning by hand if the group file is missing
       ansible.builtin.command: gluster volume set {{ item.0.key }} {{ item.1 }}
       loop: "{{ gluster_volumes | dict2items | selectattr('value.virt', 'defined') | list | product(['performance.strict-o-direct on', 'network.remote-dio disable', 'performance.quick-read off', 'performance.read-ahead off', 'performance.io-cache off']) | list }}"
-      when: not virtgroup.stat.exists
+      when: not virtgroup.stat.exists or (groups['control'] | length < 3)
       changed_when: false
 
     - name: Which volumes are started?
