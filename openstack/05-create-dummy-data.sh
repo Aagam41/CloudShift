@@ -46,13 +46,13 @@ for flavor in $FLAVOR_POOL; do
   fi
 done
 
+hypervisors=$(openstack hypervisor list -f value -c "Hypervisor Hostname")
 available_compute_hosts=()
-while IFS= read -r hypervisor; do
-  [ -n "$hypervisor" ] || continue
-  if printf '%s\n' "$COMPUTE_HOSTS" | grep -qx "$hypervisor"; then
-    available_compute_hosts+=("$hypervisor")
+for configured_host in $COMPUTE_HOSTS; do
+  if printf '%s\n' "$hypervisors" | grep -qx "$configured_host"; then
+    available_compute_hosts+=("$configured_host")
   fi
-done < <(openstack hypervisor list -f value -c "Hypervisor Hostname")
+done
 
 if [ "${#available_compute_hosts[@]}" -eq 0 ]; then
   echo "No configured compute hosts are registered in Nova." >&2
