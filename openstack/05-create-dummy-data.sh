@@ -295,10 +295,15 @@ while read -r client project; do
   fi
 
   keypair_name="loadtest"
-  if ! OS_PROJECT_NAME="$project" openstack keypair show "$keypair_name" >/dev/null 2>&1; then
-    OS_PROJECT_NAME="$project" openstack keypair create --public-key "$SSH_KEY" "$keypair_name" >/dev/null
-    add_manifest keypair "${project_id}:${keypair_name}" "${project}:${keypair_name}" "$project_id"
+  admin_user="${OS_USERNAME:-admin}"
+
+  if ! openstack role assignment list --names --project "$project_id" --user "$admin_user" -f value -c Role 2>/dev/null | grep -qx member; then
+    openstack role add --project "$project_id" --user "$admin_user" member
   fi
+
+  OS_PROJECT_NAME="$project" openstack keypair delete "$keypair_name" >/dev/null 2>&1 || true
+  OS_PROJECT_NAME="$project" openstack keypair create --public-key "$SSH_KEY" "$keypair_name" >/dev/null
+  add_manifest keypair "${project_id}:${keypair_name}" "${project}:${keypair_name}" "$project_id"
 
   if ! openstack role assignment list --names --project "$project_id" --user "$user_id" -f value -c Role 2>/dev/null | grep -qx member; then
     openstack role add --project "$project_id" --user "$user_id" member
