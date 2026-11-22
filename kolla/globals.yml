@@ -18,6 +18,7 @@ kolla_external_vip_interface: "api"            # VLAN 40 exists on the controlle
 
 # ---- Compute / live migration ----
 nova_compute_virt_type: "kvm"                  # "qemu" only if a node has no VT-x/AMD-V
+nova_ram_allocation_ratio: 2.0                 # allow 2x physical RAM to be used (overcommit)
 
 # ---- Shared storage: GlusterFS volumes (3 copies, one per controller) mounted by ansible/03-storage.yml ----
 nova_instance_datadir_volume: "/var/lib/nova"              # node-local nova state (compute_id etc. must NOT be shared)
@@ -53,3 +54,4 @@ prometheus_scrape_interval: "30s"
 # Kolla's openstack_exporter has a 45s default scrape timeout; keep it below the interval.
 prometheus_openstack_exporter_timeout: "25s"
 prometheus_cmdline_extras: "--storage.tsdb.retention.time=30d"
+prometheus_openstack_exporter_compute_api_version: "2.87"

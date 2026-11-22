@@ -10,6 +10,7 @@
 #   IMAGE_NAME=loadtest
 #   FLAVOR_POOL="m1.small m1.medium m1.large"
 #   CONFIRM=yes
+#   VMs_ONLY=yes   (skip all resource creation; only create previously failed VMs)
 set -euo pipefail
 
 source ~/kolla-venv/bin/activate
@@ -28,10 +29,11 @@ FLAVOR_POOL="${FLAVOR_POOL:-m1.small m1.medium m1.large}"
 KEY_NAME="${KEY_NAME:-loadtest}"
 MANIFEST="${MANIFEST:-$HOME/.config/cloudshift-dummy-data.manifest}"
 CREDENTIALS="${CREDENTIALS:-$HOME/.config/cloudshift-dummy-clients.txt}"
+FAILED_VMS="${FAILED_VMS:-$HOME/.config/cloudshift-dummy-failed-vms.tsv}"
 RUN_ID="dummy-$(date +%Y%m%d%H%M%S)"
 
 umask 077
-mkdir -p "$(dirname "$MANIFEST")" "$(dirname "$CREDENTIALS")"
+mkdir -p "$(dirname "$MANIFEST")" "$(dirname "$CREDENTIALS")" "$(dirname "$FAILED_VMS")"
 touch "$MANIFEST" "$CREDENTIALS"
 chmod 600 "$MANIFEST" "$CREDENTIALS"
 
@@ -76,11 +78,21 @@ read -r -a FLAVOR_ARRAY <<<"$FLAVOR_POOL"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
+if [ "${VMs_ONLY:-no}" = "yes" ]; then
+  if [ ! -s "$FAILED_VMS" ]; then
+    echo "No failed VMs recorded in $FAILED_VMS"
+    exit 0
+  fi
+  cp "$FAILED_VMS" "$tmpdir/vms.tsv"
+  SKIP_RESOURCES=yes
+fi
+
 random_between() {
   local min=$1 max=$2
   echo $(( RANDOM % (max - min + 1) + min ))
 }
 
+if [ "${SKIP_RESOURCES:-no}" != "yes" ]; then
 : > "$tmpdir/clients.tsv"
 : > "$tmpdir/projects.tsv"
 : > "$tmpdir/networks.tsv"
@@ -403,6 +415,17 @@ while read -r client project; do
   done < "$created_sg_file"
 done < "$tmpdir/projects.tsv"
 
+fi
+
+# Retry any VMs that failed on a previous run, then the newly planned ones.
+if [ -f "$FAILED_VMS" ] && [ -s "$FAILED_VMS" ]; then
+  echo "Retrying $(wc -l < "$FAILED_VMS") previously failed VM(s)..."
+  cat "$FAILED_VMS" "$tmpdir/vms.tsv" > "$tmpdir/all_vms.tsv"
+  awk -F '[ \t]+' '!seen[$2 SUBSEP $4]++' "$tmpdir/all_vms.tsv" > "$tmpdir/vms.tsv"
+fi
+
+: > "$tmpdir/failed_vms.tsv"
+
 echo "Launching virtual machines..."
 while IFS=$' \t' read -r client project network_index vm_index flavor public vcpus ram host role; do
   network="${project}-net${network_index}"
@@ -421,9 +444,6 @@ while IFS=$' \t' read -r client project network_index vm_index flavor public vcp
   fi
 
   az_args=()
-  if [ -n "${host:-}" ]; then
-    az_args+=(--availability-zone "nova:$host")
-  fi
 
   if ! env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server create "$vm_name" \
     --image "$IMAGE_NAME" \
@@ -435,6 +455,7 @@ while IFS=$' \t' read -r client project network_index vm_index flavor public vcp
     ${az_args[@]+"${az_args[@]}"} \
     --wait; then
     echo "Error creating server: $vm_name" >&2
+    printf '%s\n' "$client\t$project\t$network_index\t$vm_index\t$flavor\t$public\t$vcpus\t$ram\t$host\t$role" >> "$tmpdir/failed_vms.tsv"
     continue
   fi
 
@@ -446,18 +467,24 @@ while IFS=$' \t' read -r client project network_index vm_index flavor public vcp
       fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack floating ip show "$fip_id" -f value -c floating_ip_address)
       env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server add floating ip "$vm_name" "$fip_addr" || true
       add_manifest floatingip "$fip_id" "$fip_addr" "$project"
-      echo "Created $vm_name on ${host:-<scheduled>} with floating IP $fip_addr"
+      echo "Created $vm_name with floating IP $fip_addr"
     else
-      echo "Created $vm_name on ${host:-<scheduled>} (no floating IP available)" >&2
+      echo "Created $vm_name (no floating IP available)" >&2
     fi
   else
-    echo "Created $vm_name on ${host:-<scheduled>}"
+    echo "Created $vm_name"
   fi
 done < "$tmpdir/vms.tsv"
+
+if [ -s "$tmpdir/failed_vms.tsv" ]; then
+  cp "$tmpdir/failed_vms.tsv" "$FAILED_VMS"
+  echo "Failed VMs recorded in $FAILED_VMS (rerun to retry them)."
+else
+  rm -f "$FAILED_VMS"
+fi
 
 echo
 echo "Dummy data creation complete."
 echo "Manifest: $MANIFEST"
 echo "Credentials: $CREDENTIALS"
 echo "Run openstack/06-cleanup-dummy-data.sh to remove these resources."
-EOF

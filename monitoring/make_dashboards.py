@@ -7,7 +7,7 @@ import os
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kolla", "config", "grafana", "dashboards")
 DS = {"type": "prometheus", "uid": "${ds}"}
 JOIN = " * on(instance) group_left(nodename) node_uname_info"      # adds the host name to node_exporter series
-VM = "cloud_vm_info{project=~\"$project\",host=~\"$host\"}"         # filtered VM list used for joins
+VM = "topk(1, cloud_vm_info{project=~\"$project\",host=~\"$host\"}) by (domain)"  # dedup duplicate domains (many-to-many join fix)
 VLANS = "mgmt|storage|tunnel|api|egress|provider|dns"
 
 
@@ -169,7 +169,7 @@ def compute():
     cpu = vm_rate("libvirt_domain_info_cpu_time_seconds_total")
     d.ts("CPU cores in use", [("topk(10, %s)" % per_vm(cpu), "{{name}} ({{project}})")], 0, 14, 12, 8, desc="1.0 = one full vCPU busy")
     d.ts("CPU utilisation of the VM's own vCPUs %",
-         [("topk(10, 100 * %s / on(domain) group_left(name, project, host) cloud_vm_vcpus{project=~\"$project\",host=~\"$host\"})" % cpu, "{{name}} ({{project}})")],
+         [("topk(10, 100 * %s / on(domain) group_left(name, project, host) topk(1, cloud_vm_vcpus{project=~\"$project\",host=~\"$host\"}) by (domain))" % cpu, "{{name}} ({{project}})")],
          12, 14, 12, 8, "percent")
     d.ts("Memory in use", [("topk(10, %s)" % per_vm("libvirt_domain_info_memory_usage_bytes"), "{{name}} ({{project}})")], 0, 22, 12, 8, "bytes")
     d.ts("Disk throughput (read + write)",
@@ -187,7 +187,7 @@ def compute():
 def projects():
     d = Dash("c03-projects", "Cloud03 / Projects and usage", ["usage"], [("project", "Project", "label_values(cloud_vm_info, project)")])
     pf = "{project=~\"$project\"}"
-    used = "sum by (project) (%s)" % per_vm(vm_rate("libvirt_domain_info_cpu_time_seconds_total"), "project", "cloud_vm_info" + pf)
+    used = "sum by (project) (%s)" % per_vm(vm_rate("libvirt_domain_info_cpu_time_seconds_total"), "project", "topk(1, cloud_vm_info" + pf + ") by (domain)")
     d.stat("Projects with VMs", "count(cloud_project_instances%s)" % pf, 0, 0, 6, 4)
     d.stat("VMs", "sum(cloud_project_instances%s)" % pf, 6, 0, 6, 4)
     d.stat("vCPUs allocated", "sum(cloud_project_vcpus%s)" % pf, 12, 0, 6, 4)
@@ -200,9 +200,9 @@ def projects():
     d.ts("CPU cores in use", [(used, "{{project}}")], 0, 14, 12, 8, desc="Sum over the project's VMs, 1.0 = one vCPU fully busy")
     d.ts("CPU efficiency: used / allocated vCPUs %", [("100 * %s / on(project) (cloud_project_vcpus%s > 0)" % (used, pf), "{{project}}")],
          12, 14, 12, 8, "percent", "Low values = the project pays for vCPUs it does not use")
-    d.ts("Network sent", [("sum by (project) (%s)" % per_vm(vm_rate("libvirt_domain_interface_stats_transmit_bytes_total"), "project", "cloud_vm_info" + pf), "{{project}}")], 0, 22, 12, 8, "Bps")
-    d.ts("Network received", [("sum by (project) (%s)" % per_vm(vm_rate("libvirt_domain_interface_stats_receive_bytes_total"), "project", "cloud_vm_info" + pf), "{{project}}")], 12, 22, 12, 8, "Bps")
-    d.ts("Disk throughput", [("sum by (project) (%s)" % per_vm("sum by (domain) (rate(libvirt_domain_block_stats_read_bytes_total[5m]) + rate(libvirt_domain_block_stats_write_bytes_total[5m]))", "project", "cloud_vm_info" + pf), "{{project}}")], 0, 30, 12, 8, "Bps")
+    d.ts("Network sent", [("sum by (project) (%s)" % per_vm(vm_rate("libvirt_domain_interface_stats_transmit_bytes_total"), "project", "topk(1, cloud_vm_info" + pf + ") by (domain)"), "{{project}}")], 0, 22, 12, 8, "Bps")
+    d.ts("Network received", [("sum by (project) (%s)" % per_vm(vm_rate("libvirt_domain_interface_stats_receive_bytes_total"), "project", "topk(1, cloud_vm_info" + pf + ") by (domain)"), "{{project}}")], 12, 22, 12, 8, "Bps")
+    d.ts("Disk throughput", [("sum by (project) (%s)" % per_vm("sum by (domain) (rate(libvirt_domain_block_stats_read_bytes_total[5m]) + rate(libvirt_domain_block_stats_write_bytes_total[5m]))", "project", "topk(1, cloud_vm_info" + pf + ") by (domain)"), "{{project}}")], 0, 30, 12, 8, "Bps")
     d.ts("VMs per project over time", [("cloud_project_instances" + pf, "{{project}}")], 12, 30, 12, 8)
     return d
 
