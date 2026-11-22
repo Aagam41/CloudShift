@@ -25,7 +25,7 @@ VMS_MIN="${VMS_MIN:-1}"
 VMS_MAX="${VMS_MAX:-5}"
 COMPUTE_HOSTS="${COMPUTE_HOSTS:-cloud03-compute01 cloud03-compute02 cloud03-compute03}"
 IMAGE_NAME="${IMAGE_NAME:-loadtest}"
-FLAVOR_POOL="${FLAVOR_POOL:-m1.small m1.medium m1.large}"
+FLAVOR_POOL="${FLAVOR_POOL:-m1.small c1.medium c1.large}"
 KEY_NAME="${KEY_NAME:-loadtest}"
 MANIFEST="${MANIFEST:-$HOME/.config/cloudshift-dummy-data.manifest}"
 CREDENTIALS="${CREDENTIALS:-$HOME/.config/cloudshift-dummy-clients.txt}"
@@ -64,13 +64,13 @@ fi
 
 declare -A FLAVOR_VCPUS=(
   [m1.small]=1
-  [m1.medium]=2
-  [m1.large]=4
+  [c1.medium]=2
+  [c1.large]=4
 )
 declare -A FLAVOR_RAM=(
   [m1.small]=1024
-  [m1.medium]=2048
-  [m1.large]=4096
+  [c1.medium]=2048
+  [c1.large]=4096
 )
 
 read -r -a FLAVOR_ARRAY <<<"$FLAVOR_POOL"
