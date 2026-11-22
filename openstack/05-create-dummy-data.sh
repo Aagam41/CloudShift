@@ -302,6 +302,10 @@ while read -r client project; do
     openstack role add --project "$project_id" --user "$admin_user" member
   fi
 
+  if ! openstack role assignment list --names --project "$project_id" --user "$admin_user" -f value -c Role 2>/dev/null | grep -qx admin; then
+    openstack role add --project "$project_id" --user "$admin_user" admin
+  fi
+
   env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack keypair delete "$keypair_name" >/dev/null 2>&1 || true
   env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack keypair create --public-key "$SSH_KEY" "$keypair_name" >/dev/null
   add_manifest keypair "${project_id}:${keypair_name}" "${project}:${keypair_name}" "$project_id"
