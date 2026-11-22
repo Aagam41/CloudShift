@@ -4,7 +4,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-CLOUDSHIFT="$HERE"
+CLOUDSHIFT="$(dirname "$HERE")"
 INVENTORY="$CLOUDSHIFT/ansible/inventory.yml"
 
 #echo "=== 1. Back up critical files ==="
