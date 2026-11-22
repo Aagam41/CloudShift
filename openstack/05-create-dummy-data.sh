@@ -173,7 +173,7 @@ if (( available_fips < 0 )); then
   available_fips=0
 fi
 
-awk -v avail="$available_fips" '
+awk -F '\t' -v OFS='\t' -v avail="$available_fips" '
   BEGIN { public=0 }
   {
     if ($6 == 1 && public >= avail) {
@@ -344,7 +344,7 @@ while read -r client project vms cores ram fips networks; do
 done < "$tmpdir/project_totals.tsv"
 
 echo "Creating networks and subnets..."
-while IFS=$'\t' read -r client project network subnet subnet_index role cidr; do
+while IFS=$' \t' read -r client project network subnet subnet_index role cidr; do
   project_id=$(openstack project show --domain default "$project" -f value -c id)
   if ! env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack network show "$network" >/dev/null 2>&1; then
     network_id=$(openstack network create --project "$project" "$network" -f value -c id)
@@ -374,7 +374,7 @@ while read -r client project; do
     router_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack router show "$router" -f value -c id)
   fi
   env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack router set "$router" --external-gateway provider-net || true
-  while IFS=$'\t' read -r c p network subnet subnet_index role cidr; do
+  while IFS=$' \t' read -r c p network subnet subnet_index role cidr; do
     if [ "$p" = "$project" ]; then
       subnet_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack subnet show "$subnet" -f value -c id)
       if env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack router add subnet "$router" "$subnet" >/dev/null 2>&1; then
@@ -428,7 +428,7 @@ while read -r client project; do
 done < "$tmpdir/projects.tsv"
 
 echo "Launching virtual machines..."
-while IFS=$'\t' read -r client project network_index vm_index flavor public vcpus ram host role; do
+while IFS=$' \t' read -r client project network_index vm_index flavor public vcpus ram host role; do
   network="${project}-net${network_index}"
   vm_name="${project}-vm${vm_index}"
   baseline_sg="${project}-sg-baseline"
@@ -444,15 +444,23 @@ while IFS=$'\t' read -r client project network_index vm_index flavor public vcpu
     continue
   fi
 
-  env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server create "$vm_name" \
+  az_args=()
+  if [ -n "${host:-}" ]; then
+    az_args+=(--availability-zone "nova:$host")
+  fi
+
+  if ! env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server create "$vm_name" \
     --image "$IMAGE_NAME" \
     --flavor "$flavor" \
     --network "$network" \
     --security-group "$baseline_sg" \
     --security-group "$role_sg" \
     --key-name "$KEY_NAME" \
-    --availability-zone "nova:$host" \
-    --wait
+    ${az_args[@]+"${az_args[@]}"} \
+    --wait; then
+    echo "Error creating server: $vm_name" >&2
+    continue
+  fi
 
   vm_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server show "$vm_name" -f value -c id)
   add_manifest server "$vm_id" "$vm_name" "$project"
@@ -462,9 +470,9 @@ while IFS=$'\t' read -r client project network_index vm_index flavor public vcpu
     fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack floating ip show "$fip_id" -f value -c floating_ip_address)
     env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server add floating ip "$vm_name" "$fip_addr"
     add_manifest floatingip "$fip_id" "$fip_addr" "$project"
-    echo "Created $vm_name on $host with floating IP $fip_addr"
+    echo "Created $vm_name on ${host:-<scheduled>} with floating IP $fip_addr"
   else
-    echo "Created $vm_name on $host"
+    echo "Created $vm_name on ${host:-<scheduled>}"
   fi
 done < "$tmpdir/vms.tsv"
 
