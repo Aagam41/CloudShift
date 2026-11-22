@@ -12,7 +12,6 @@ SECURITY_GROUP="${SECURITY_GROUP:-loadtest}"
 COMPUTE_HOSTS="${COMPUTE_HOSTS:-cloud03-compute01 cloud03-compute02 cloud03-compute03}"
 VM_PREFIX="${VM_PREFIX:-loadtest}"
 ASSIGN_FLOATING_IPS="${ASSIGN_FLOATING_IPS:-yes}"
-INSTANCES_PER_NODE="${INSTANCES_PER_NODE:-}"
 
 if ! openstack image show "$IMAGE_NAME" >/dev/null 2>&1; then
   echo "Image '$IMAGE_NAME' not found. Run openstack/03-build-loadtest-image.sh first." >&2
