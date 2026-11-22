@@ -50,4 +50,6 @@ enable_cloudkitty: "yes"
 enable_prometheus: "yes"
 enable_grafana: "yes"
 prometheus_scrape_interval: "30s"
+# Kolla's openstack_exporter has a 45s default scrape timeout; keep it below the interval.
+prometheus_openstack_exporter_timeout: "25s"
 prometheus_cmdline_extras: "--storage.tsdb.retention.time=30d"
