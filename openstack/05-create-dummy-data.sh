@@ -266,7 +266,7 @@ while read -r client project; do
     current_client="$client"
     user="$client"
     password=$(python3 -c 'import secrets; print(secrets.token_urlsafe(16))')
-    if ! openstack user show "$user" >/dev/null 2>&1; then
+    if ! openstack user show --domain default "$user" >/dev/null 2>&1; then
       user_id=$(openstack user create --domain default --password "$password" --email "${user}@example.com" "$user" -f value -c id)
       add_manifest user "$user_id" "$user" "$project"
       {
@@ -288,11 +288,11 @@ while read -r client project; do
     fi
   fi
 
-  if ! openstack project show "$project" >/dev/null 2>&1; then
+  if ! openstack project show --domain default "$project" >/dev/null 2>&1; then
     project_id=$(openstack project create --domain default "$project" -f value -c id)
     add_manifest project "$project_id" "$project" "$project_id"
   else
-    project_id=$(openstack project show "$project" -f value -c id)
+    project_id=$(openstack project show --domain default "$project" -f value -c id)
   fi
 
   keypair_name="loadtest"
@@ -314,7 +314,7 @@ done < "$tmpdir/projects.tsv"
 
 echo "Setting project quotas..."
 while read -r client project vms cores ram fips networks; do
-  project_id=$(openstack project show "$project" -f value -c id)
+  project_id=$(openstack project show --domain default "$project" -f value -c id)
   target_instances=$((vms + 2))
   target_cores=$((cores + 2))
   target_ram=$((ram + 1024))
@@ -341,9 +341,9 @@ done < "$tmpdir/project_totals.tsv"
 
 echo "Creating networks and subnets..."
 while IFS=$'\t' read -r client project network subnet subnet_index role cidr; do
-  project_id=$(openstack project show "$project" -f value -c id)
+  project_id=$(openstack project show --domain default "$project" -f value -c id)
   if ! env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack network show "$network" >/dev/null 2>&1; then
-    network_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack network create "$network" -f value -c id)
+    network_id=$(openstack network create --project "$project" "$network" -f value -c id)
     add_manifest network "$network_id" "$network" "$project_id"
   else
     network_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack network show "$network" -f value -c id)
@@ -361,10 +361,10 @@ done < "$tmpdir/networks.tsv"
 
 echo "Creating routers..."
 while read -r client project; do
-  project_id=$(openstack project show "$project" -f value -c id)
+  project_id=$(openstack project show --domain default "$project" -f value -c id)
   router="${project}-router"
   if ! env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack router show "$router" >/dev/null 2>&1; then
-    router_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack router create "$router" -f value -c id)
+    router_id=$(openstack router create --project "$project" "$router" -f value -c id)
     add_manifest router "$router_id" "$router" "$project_id"
   else
     router_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack router show "$router" -f value -c id)
@@ -382,20 +382,25 @@ done < "$tmpdir/projects.tsv"
 
 echo "Creating security groups..."
 while read -r client project; do
-  project_id=$(openstack project show "$project" -f value -c id)
+  project_id=$(openstack project show --domain default "$project" -f value -c id)
   baseline_sg="${project}-sg-baseline"
   frontend_sg="${project}-sg-frontend"
   backend_sg="${project}-sg-backend"
   database_sg="${project}-sg-database"
 
+  created_sg_file="$tmpdir/created_sgs"
+  : > "$created_sg_file"
+
   for sg in "$baseline_sg" "$frontend_sg" "$backend_sg" "$database_sg"; do
     if ! env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack security group show "$sg" >/dev/null 2>&1; then
-      sg_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack security group create "$sg" -f value -c id)
+      sg_id=$(openstack security group create --project "$project" "$sg" -f value -c id)
       add_manifest security_group "$sg_id" "$sg" "$project_id"
+      echo "$sg" >> "$created_sg_file"
     fi
   done
 
-  for sg in "$baseline_sg" "$frontend_sg" "$backend_sg" "$database_sg"; do
+  while IFS= read -r sg; do
+    [ -n "$sg" ] || continue
     case "$sg" in
       "$baseline_sg")
         env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack security group rule create --proto icmp "$sg" >/dev/null 2>&1 || true
@@ -415,32 +420,8 @@ while read -r client project; do
         env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 5432 --remote-group "$backend_sg" "$sg" >/dev/null 2>&1 || true
         ;;
     esac
-  done
+  done < "$created_sg_file"
 done < "$tmpdir/projects.tsv"
-
-ensure_floating_ip() {
-  local project="$1" vm_name="$2"
-  local addresses fip_addr fip_id
-
-  addresses=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server show "$vm_name" -f value -c addresses 2>/dev/null || true)
-  if printf '%s\n' "$addresses" | grep -qE '172\.24\.4\.[0-9]+'; then
-    printf '%s\n' "$addresses" | grep -oE '172\.24\.4\.[0-9]+' | head -n 1
-    return 0
-  fi
-
-  fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project"     openstack floating ip list -f value -c "Floating IP Address" -c "Fixed IP Address" |     awk '$2 == "None" { print $1; exit }')
-
-  if [ -z "$fip_addr" ]; then
-    fip_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project"       openstack floating ip create provider-net -f value -c id)
-    fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project"       openstack floating ip show "$fip_id" -f value -c floating_ip_address)
-    add_manifest floatingip "$fip_id" "$fip_addr" "$project"
-  else
-    fip_id=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project"       openstack floating ip show "$fip_addr" -f value -c id)
-  fi
-
-  env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project"     openstack server add floating ip "$vm_name" "$fip_addr"
-  printf '%s\n' "$fip_addr"
-}
 
 echo "Launching virtual machines..."
 while IFS=$'\t' read -r client project network_index vm_index flavor public vcpus ram host role; do
@@ -456,13 +437,6 @@ while IFS=$'\t' read -r client project network_index vm_index flavor public vcpu
 
   if env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server show "$vm_name" >/dev/null 2>&1; then
     echo "Reusing existing server $vm_name"
-    existing_fip=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server show "$vm_name" -f value -c addresses | grep -oE '172\.24\.4\.[0-9]+' | head -n 1 || true)
-    if [ "$public" -eq 1 ] && [ -z "$existing_fip" ]; then
-      fip_addr=$(ensure_floating_ip "$project" "$vm_name")
-      echo "  attached floating IP $fip_addr"
-    elif [ "$public" -eq 1 ]; then
-      echo "  floating IP $existing_fip"
-    fi
     continue
   fi
 
@@ -480,7 +454,10 @@ while IFS=$'\t' read -r client project network_index vm_index flavor public vcpu
   add_manifest server "$vm_id" "$vm_name" "$project"
 
   if [ "$public" -eq 1 ]; then
-    fip_addr=$(ensure_floating_ip "$project" "$vm_name")
+    fip_id=$(openstack floating ip create --project "$project" provider-net -f value -c id)
+    fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack floating ip show "$fip_id" -f value -c floating_ip_address)
+    env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server add floating ip "$vm_name" "$fip_addr"
+    add_manifest floatingip "$fip_id" "$fip_addr" "$project"
     echo "Created $vm_name on $host with floating IP $fip_addr"
   else
     echo "Created $vm_name on $host"
