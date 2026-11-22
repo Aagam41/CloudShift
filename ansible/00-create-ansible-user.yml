@@ -6,6 +6,7 @@
   gather_facts: yes
 
   vars:
+    ansible_user: "{{ bootstrap_user | default('ubuntu') }}"
     ansible_username: ansible
     ansible_public_key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_ed25519.pub') }}"
 

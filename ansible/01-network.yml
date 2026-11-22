@@ -28,7 +28,7 @@
         python3 - <<'PY'
         import glob, yaml
         for path in glob.glob('/etc/netplan/*.yaml') + glob.glob('/etc/netplan/*.yml'):
-            if path.endswith('01-network-manager-all.yaml') or path.endswith('60-cloud03-vlans.yaml'):
+            if path.endswith('01-network-manager-all.yaml') or path.endswith('01-netcfg.yaml') or path.endswith('60-cloud03-vlans.yaml'):
                 continue
             try:
                 with open(path) as f:
@@ -99,9 +99,17 @@
       ansible.builtin.include_tasks: tasks/clean_netplan.yml
 
     - name: Secure base netplan permissions
-      ansible.builtin.file:
-        path: /etc/netplan/01-network-manager-all.yaml
-        mode: "0600"
+      ansible.builtin.shell: chmod -f 0600 /etc/netplan/*.yaml /etc/netplan/*.yml || true
+      changed_when: false
+
+    - name: Remove legacy vlan interfaces if present
+      ansible.builtin.shell: |
+        for iface in vlan10 vlan20 vlan30 vlan40 vlan50 vlan60 vlan70; do
+          if ip link show "$iface" >/dev/null 2>&1; then
+            ip link delete "$iface"
+          fi
+        done
+      changed_when: false
 
     - name: VLAN netplan file
       ansible.builtin.template:

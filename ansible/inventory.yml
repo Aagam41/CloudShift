@@ -1,4 +1,4 @@
-# Single source of truth for the node list. Edit the lines marked CHANGE.
+# Single source of truth for the node list.
 all:
   vars:
     ansible_user: ansible
@@ -6,9 +6,11 @@ all:
   children:
     control:
       hosts:
-        cloud03-controller01: {ansible_host: 192.168.0.11, host_id: 11, nic: eno2}
-        cloud03-controller02: {ansible_host: 192.168.0.12, host_id: 12, nic: eno2}
-        cloud03-controller03: {ansible_host: 192.168.0.13, host_id: 13, nic: eno2}
+        cloud03-controller01:
+          ansible_host: 192.168.0.11
+          host_id: 11
+          nic: eno1
+          bootstrap_user: cloud03-compute01
     compute:
       hosts:
         # cloud03-controlcompute:                      # controller 03 is also a compute node
@@ -19,6 +21,4 @@ all:
         #cloud03-compute05: {ansible_host: 192.168.0.25, host_id: 25, nic: enp3s0}
     gateway:
       hosts:
-        cloud03-controller01: {wifi_if: wlo1, gw_priority: 150}   # CHANGE wifi_if (ip -br link)
-        cloud03-controller02: {wifi_if: wlo1, gw_priority: 120}   # no Wi-Fi adapter on a controller?
-        cloud03-controller03: {wifi_if: wlo1, gw_priority: 100} # -> delete its line (see docs/HA.md)
+        cloud03-controller01: {wifi_if: enx522f1af8028a, gw_priority: 150}

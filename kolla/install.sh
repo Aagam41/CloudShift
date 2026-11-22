@@ -115,7 +115,8 @@ for host in $HOSTS; do
 done
 sort -u ~/.ssh/known_hosts -o ~/.ssh/known_hosts
 
-echo '==> Checking the service inventory (each group must contain the 3 controllers)'
+echo '==> Checking the service inventory'
+EXPECTED_CONTROLLERS=$(awk '/^\[control\]/{f=1;next} /^\[/{f=0} f&&NF&&!/^#/{print $1}' "$MULTINODE_HEAD" | wc -w)
 for group in glance-api gnocchi ceilometer cloudkitty valkey prometheus grafana prometheus-alertmanager; do
   hosts=$(
     ansible-inventory -i "$INV" --graph "$group" \
@@ -125,8 +126,8 @@ for group in glance-api gnocchi ceilometer cloudkitty valkey prometheus grafana 
   )
   printf '%-24s %s\n' "$group" "$hosts"
   count=$(printf '%s\n' "$hosts" | wc -w)
-  if [ "$count" -ne 3 ]; then
-    echo "ERROR: $group contains $count controllers; expected 3." >&2
+  if [ "$count" -ne "$EXPECTED_CONTROLLERS" ]; then
+    echo "ERROR: $group contains $count controllers; expected $EXPECTED_CONTROLLERS." >&2
     exit 1
   fi
 done
