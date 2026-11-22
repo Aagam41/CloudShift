@@ -49,5 +49,5 @@ enable_cloudkitty: "yes"
 # Node, libvirt, OpenStack, cAdvisor, MariaDB, HAProxy and Memcached exporters switch on by default with Prometheus.
 enable_prometheus: "yes"
 enable_grafana: "yes"
-prometheus_scrape_interval: "15s"
+prometheus_scrape_interval: "30s"
 prometheus_cmdline_extras: "--storage.tsdb.retention.time=30d"
