@@ -316,34 +316,8 @@ while read -r client project; do
   fi
 done < "$tmpdir/projects.tsv"
 
-echo "Setting project quotas..."
-while read -r client project vms cores ram fips networks; do
-  project_id=$(openstack project show --domain default "$project" -f value -c id)
-  target_instances=$((vms + 2))
-  target_cores=$((cores + 2))
-  target_ram=$((ram + 1024))
-  target_fips=$((fips + 2))
-  target_networks=$((networks + 2))
-  target_subnets=$((networks + 2))
-  target_routers=2
-  target_ports=$((vms + networks + target_routers + 5))
-  target_secgroups=6
-  target_secgroup_rules=40
-  if ! openstack quota set \
-    --instances "$target_instances" \
-    --cores "$target_cores" \
-    --ram "$target_ram" \
-    --floating-ips "$target_fips" \
-    --networks "$target_networks" \
-    --subnets "$target_subnets" \
-    --routers "$target_routers" \
-    --ports "$target_ports" \
-    --secgroups "$target_secgroups" \
-    --secgroup-rules "$target_secgroup_rules" \
-    "$project_id"; then
-    echo "Warning: could not set quotas for $project (leaving existing quotas)" >&2
-  fi
-done < "$tmpdir/project_totals.tsv"
+echo "Adjusting project quotas to allow 2x cluster capacity..."
+"$(dirname "$0")/adjust-quotas.sh" || echo "Warning: quota adjustment failed; continuing" >&2
 
 echo "Creating networks and subnets..."
 while IFS=$' \t' read -r client project network subnet subnet_index role cidr; do
