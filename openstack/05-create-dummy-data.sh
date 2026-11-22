@@ -342,15 +342,15 @@ done < "$tmpdir/project_totals.tsv"
 echo "Creating networks and subnets..."
 while IFS=$'\t' read -r client project network subnet subnet_index role cidr; do
   project_id=$(openstack project show "$project" -f value -c id)
-  if ! openstack network show "$network" >/dev/null 2>&1; then
+  if ! OS_PROJECT_NAME="$project" openstack network show "$network" >/dev/null 2>&1; then
     network_id=$(openstack network create --project "$project" "$network" -f value -c id)
     add_manifest network "$network_id" "$network" "$project_id"
   else
-    network_id=$(openstack network show "$network" -f value -c id)
+    network_id=$(OS_PROJECT_NAME="$project" openstack network show "$network" -f value -c id)
   fi
 
-  if ! openstack subnet show "$subnet" >/dev/null 2>&1; then
-    subnet_id=$(openstack subnet create \
+  if ! OS_PROJECT_NAME="$project" openstack subnet show "$subnet" >/dev/null 2>&1; then
+    subnet_id=$(OS_PROJECT_NAME="$project" openstack subnet create \
       --project "$project" \
       --network "$network" \
       --subnet-range "$cidr" \
@@ -364,17 +364,17 @@ echo "Creating routers..."
 while read -r client project; do
   project_id=$(openstack project show "$project" -f value -c id)
   router="${project}-router"
-  if ! openstack router show "$router" >/dev/null 2>&1; then
+  if ! OS_PROJECT_NAME="$project" openstack router show "$router" >/dev/null 2>&1; then
     router_id=$(openstack router create --project "$project" "$router" -f value -c id)
     add_manifest router "$router_id" "$router" "$project_id"
   else
-    router_id=$(openstack router show "$router" -f value -c id)
+    router_id=$(OS_PROJECT_NAME="$project" openstack router show "$router" -f value -c id)
   fi
-  openstack router set "$router" --external-gateway provider-net || true
+  OS_PROJECT_NAME="$project" openstack router set "$router" --external-gateway provider-net || true
   while IFS=$'\t' read -r c p network subnet subnet_index role cidr; do
     if [ "$p" = "$project" ]; then
-      subnet_id=$(openstack subnet show "$subnet" -f value -c id)
-      if openstack router add subnet "$router" "$subnet" >/dev/null 2>&1; then
+      subnet_id=$(OS_PROJECT_NAME="$project" openstack subnet show "$subnet" -f value -c id)
+      if OS_PROJECT_NAME="$project" openstack router add subnet "$router" "$subnet" >/dev/null 2>&1; then
         add_manifest router_subnet "${router_id}:${subnet_id}" "${router}:${subnet}" "$project_id"
       fi
     fi
@@ -393,7 +393,7 @@ while read -r client project; do
   : > "$created_sg_file"
 
   for sg in "$baseline_sg" "$frontend_sg" "$backend_sg" "$database_sg"; do
-    if ! openstack security group show "$sg" >/dev/null 2>&1; then
+    if ! OS_PROJECT_NAME="$project" openstack security group show "$sg" >/dev/null 2>&1; then
       sg_id=$(openstack security group create --project "$project" "$sg" -f value -c id)
       add_manifest security_group "$sg_id" "$sg" "$project_id"
       echo "$sg" >> "$created_sg_file"
@@ -404,21 +404,21 @@ while read -r client project; do
     [ -n "$sg" ] || continue
     case "$sg" in
       "$baseline_sg")
-        openstack security group rule create --proto icmp "$sg" >/dev/null 2>&1 || true
-        openstack security group rule create --proto tcp --dst-port 22 "$sg" >/dev/null 2>&1 || true
-        openstack security group rule create --proto tcp --dst-port 80 "$sg" >/dev/null 2>&1 || true
-        openstack security group rule create --proto tcp --dst-port 443 "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto icmp "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 22 "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 80 "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 443 "$sg" >/dev/null 2>&1 || true
         ;;
       "$frontend_sg")
-        openstack security group rule create --proto tcp --dst-port 80 "$sg" >/dev/null 2>&1 || true
-        openstack security group rule create --proto tcp --dst-port 443 "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 80 "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 443 "$sg" >/dev/null 2>&1 || true
         ;;
       "$backend_sg")
-        openstack security group rule create --proto tcp --dst-port 8080 --remote-group "$frontend_sg" "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 8080 --remote-group "$frontend_sg" "$sg" >/dev/null 2>&1 || true
         ;;
       "$database_sg")
-        openstack security group rule create --proto tcp --dst-port 3306 --remote-group "$backend_sg" "$sg" >/dev/null 2>&1 || true
-        openstack security group rule create --proto tcp --dst-port 5432 --remote-group "$backend_sg" "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 3306 --remote-group "$backend_sg" "$sg" >/dev/null 2>&1 || true
+        OS_PROJECT_NAME="$project" openstack security group rule create --proto tcp --dst-port 5432 --remote-group "$backend_sg" "$sg" >/dev/null 2>&1 || true
         ;;
     esac
   done < "$created_sg_file"
@@ -436,12 +436,12 @@ while IFS=$'\t' read -r client project network_index vm_index flavor public vcpu
     *) role_sg="${project}-sg-frontend" ;;
   esac
 
-  if openstack server show "$vm_name" >/dev/null 2>&1; then
+  if OS_PROJECT_NAME="$project" openstack server show "$vm_name" >/dev/null 2>&1; then
     echo "Reusing existing server $vm_name"
     continue
   fi
 
-  openstack server create "$vm_name" \
+  OS_PROJECT_NAME="$project" openstack server create "$vm_name" \
     --image "$IMAGE_NAME" \
     --flavor "$flavor" \
     --network "$network" \
@@ -451,13 +451,13 @@ while IFS=$'\t' read -r client project network_index vm_index flavor public vcpu
     --availability-zone "nova:$host" \
     --wait
 
-  vm_id=$(openstack server show "$vm_name" -f value -c id)
+  vm_id=$(OS_PROJECT_NAME="$project" openstack server show "$vm_name" -f value -c id)
   add_manifest server "$vm_id" "$vm_name" "$project"
 
   if [ "$public" -eq 1 ]; then
     fip_id=$(openstack floating ip create --project "$project" provider-net -f value -c id)
-    fip_addr=$(openstack floating ip show "$fip_id" -f value -c floating_ip_address)
-    openstack server add floating ip "$vm_name" "$fip_addr"
+    fip_addr=$(OS_PROJECT_NAME="$project" openstack floating ip show "$fip_id" -f value -c floating_ip_address)
+    OS_PROJECT_NAME="$project" openstack server add floating ip "$vm_name" "$fip_addr"
     add_manifest floatingip "$fip_id" "$fip_addr" "$project"
     echo "Created $vm_name on $host with floating IP $fip_addr"
   else
