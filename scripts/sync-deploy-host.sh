@@ -4,7 +4,7 @@
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 ME="$(hostname)"
-for h in cloud03-contorller01 cloud03-contorller02 cloud03-contorlcompute; do
+for h in cloud03-controller01 cloud03-controller02 cloud03-controller03; do
   [ "$h" = "$ME" ] && continue
   echo "== $h"
   sudo rsync -a --rsync-path="sudo rsync" /etc/kolla/ "$USER@$h:/etc/kolla/"       # incl. passwords.yml, globals.yml, config/

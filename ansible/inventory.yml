@@ -13,21 +13,12 @@ all:
           bootstrap_user: cloud03-compute01
     compute:
       hosts:
-        cloud03-compute01:
-          ansible_host: 192.168.0.21
-          host_id: 21
-          nic: eno1
-          bootstrap_user: cloud03-compute02
-        cloud03-compute02:
-          ansible_host: 192.168.0.22
-          host_id: 22
-          nic: eno1
-          bootstrap_user: cloud03-control01
-        cloud03-compute03:
-          ansible_host: 192.168.0.23
-          host_id: 23
-          nic: eno1
-          bootstrap_user: cloud03
+        # cloud03-controlcompute:                      # controller 03 is also a compute node
+        cloud03-compute01: {ansible_host: 192.168.0.21, host_id: 21, nic: enx00e04c645b2f}
+        cloud03-compute02: {ansible_host: 192.168.0.22, host_id: 22, nic: enx000ec6b1d736}
+        cloud03-compute03: {ansible_host: 192.168.0.23, host_id: 23, nic: eno1}
+        #cloud03-compute04: {ansible_host: 192.168.0.24, host_id: 24, nic: enp3s0}
+        #cloud03-compute05: {ansible_host: 192.168.0.25, host_id: 25, nic: enp3s0}
     gateway:
       hosts:
         cloud03-controller01: {wifi_if: enx522f1af8028a, gw_priority: 150}

@@ -53,7 +53,7 @@ NOVA_URL="${NOVA_URL%/}"
 HYPERVISOR_JSON="$(mktemp)"
 trap 'rm -f "$HYPERVISOR_JSON"' EXIT
 
-curl -fsS -H "X-Auth-Token: $TOKEN" "$NOVA_URL/v2.1/os-hypervisors/detail" -o "$HYPERVISOR_JSON"
+curl -fsS -H "X-Auth-Token: $TOKEN" "$NOVA_URL/os-hypervisors/detail" -o "$HYPERVISOR_JSON"
 
 capacity_for_host() {
   python3 - "$1" "$HYPERVISOR_JSON" <<'PY'
