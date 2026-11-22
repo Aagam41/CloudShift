@@ -329,7 +329,7 @@ while read -r client project vms cores ram fips networks; do
   target_ports=$((vms + networks + target_routers + 5))
   target_secgroups=6
   target_secgroup_rules=40
-  openstack quota set \
+  if ! openstack quota set \
     --instances "$target_instances" \
     --cores "$target_cores" \
     --ram "$target_ram" \
@@ -340,7 +340,9 @@ while read -r client project vms cores ram fips networks; do
     --ports "$target_ports" \
     --secgroups "$target_secgroups" \
     --secgroup-rules "$target_secgroup_rules" \
-    "$project_id"
+    "$project_id"; then
+    echo "Warning: could not set quotas for $project (leaving existing quotas)" >&2
+  fi
 done < "$tmpdir/project_totals.tsv"
 
 echo "Creating networks and subnets..."
@@ -466,11 +468,14 @@ while IFS=$' \t' read -r client project network_index vm_index flavor public vcp
   add_manifest server "$vm_id" "$vm_name" "$project"
 
   if [ "$public" -eq 1 ]; then
-    fip_id=$(openstack floating ip create --project "$project" provider-net -f value -c id)
-    fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack floating ip show "$fip_id" -f value -c floating_ip_address)
-    env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server add floating ip "$vm_name" "$fip_addr"
-    add_manifest floatingip "$fip_id" "$fip_addr" "$project"
-    echo "Created $vm_name on ${host:-<scheduled>} with floating IP $fip_addr"
+    if fip_id=$(openstack floating ip create --project "$project" provider-net -f value -c id 2>/dev/null); then
+      fip_addr=$(env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack floating ip show "$fip_id" -f value -c floating_ip_address)
+      env -u OS_PROJECT_ID -u OS_TENANT_NAME OS_PROJECT_NAME="$project" openstack server add floating ip "$vm_name" "$fip_addr" || true
+      add_manifest floatingip "$fip_id" "$fip_addr" "$project"
+      echo "Created $vm_name on ${host:-<scheduled>} with floating IP $fip_addr"
+    else
+      echo "Created $vm_name on ${host:-<scheduled>} (no floating IP available)" >&2
+    fi
   else
     echo "Created $vm_name on ${host:-<scheduled>}"
   fi
