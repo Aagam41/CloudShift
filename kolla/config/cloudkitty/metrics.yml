@@ -2,11 +2,15 @@
 # What CloudKitty bills, collected from Gnocchi. A cost applies per collection period (1 h by default),
 # so "0.02 for m1.small" means 0.02 per instance-hour.
 metrics:
-  cpu:                        # one unit per hour while the instance exists, priced by flavor
+  cpu:                        # one unit per hour while the instance exists (charged per instance-hour)
     unit: instance
     alt_name: instance
     groupby: [id, project_id]
-    metadata: [flavor_name, flavor_id, vcpus]
+    # Ceilometer's compute agent uses the libvirt inspector, which has no access to Nova flavor
+    # metadata, so Gnocchi instance resources carry no flavor attributes. Keep metadata empty and
+    # rate instances with a default (no-field) hashmap mapping. Per-flavor pricing requires
+    # switching Ceilometer to the Nova inspector (see AGENTS.md).
+    metadata: []
     mutate: NUMBOOL
     extra_args:
       aggregation_method: mean

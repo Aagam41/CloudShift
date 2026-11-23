@@ -90,17 +90,34 @@ def collect_nova(conn):
 
 
 def collect_billing(conn):
-    """Month-to-date cost per project and service from the CloudKitty v2 summary API."""
+    """Month-to-date cost per project and service from CloudKitty.
+
+    Kolla (2026.x) exposes only the v1 rating API, so /v2/summary 404s there;
+    fall back to /v1/summary (and /v1/rating/summary) in that case.
+    """
     now = dt.datetime.now(dt.timezone.utc)
     begin = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     end = (begin + dt.timedelta(days=32)).replace(day=1)
-    resp = conn.session.get("/v2/summary",
-                            endpoint_filter={"service_type": "rating", "interface": RATING_INTERFACE},
-                            params={"begin": begin.strftime("%Y-%m-%dT%H:%M:%S"),
-                                    "end": end.strftime("%Y-%m-%dT%H:%M:%S"),
-                                    "groupby": "project_id,type"})
-    resp.raise_for_status()
-    data = resp.json()
+    params = {"begin": begin.strftime("%Y-%m-%dT%H:%M:%S"),
+              "end": end.strftime("%Y-%m-%dT%H:%M:%S"),
+              "groupby": "project_id,type"}
+    last_err = None
+    for path in ("/v2/summary", "/v1/summary", "/v1/rating/summary"):
+        try:
+            resp = conn.session.get(path,
+                                    endpoint_filter={"service_type": "rating", "interface": RATING_INTERFACE},
+                                    params=params)
+            if resp.status_code == 404:
+                last_err = "404 on %s" % path
+                continue
+            resp.raise_for_status()
+            data = resp.json()
+            break
+        except Exception as e:
+            last_err = str(e)
+            continue
+    else:
+        raise RuntimeError("CloudKitty summary endpoint not found: %s" % last_err)
     rows = data["results"]
     if rows and not isinstance(rows[0], dict):                    # {"columns": [...], "results": [[...]]}
         rows = [dict(zip(data["columns"], r)) for r in rows]

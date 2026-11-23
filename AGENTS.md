@@ -55,6 +55,9 @@ OpenStack CLI needs `source ~/kolla-venv/bin/activate && source /etc/kolla/admin
 - `cloud_exporter.py` binds `BIND` (default `10.0.10.11`) on port `9199` and runs on every controller.
 - Scheduler starts in `dry_run: true`; Prometheus uses basic auth `admin` / `prometheus_password`.
 - Billing flavor names must match `openstack/01-cloud-setup.sh`; CloudKitty CLI column names may differ (use `-f json`).
+- Ceilometer's compute agent uses the libvirt inspector, which never pushes flavor metadata onto Gnocchi instance resources, so CloudKitty cannot rate per-flavor with the default setup; `02-billing-rates.sh` therefore creates a default (no-field) flat per-instance mapping (plus inert per-flavor rules that activate only with the Nova inspector). Per-flavor pricing needs `inspector = hypervisor` in `ceilometer.conf` `[compute]`.
+- Kolla's CloudKitty (2026.x) exposes only the v1 rating API; `cloud_exporter.py` probes `/v2/summary` then falls back to `/v1/summary`.
+- Kolla defaults `prometheus_openstack_exporter_compute_api_version` to `latest`, which overrides the exporter's 2.87 pin and breaks the per-hypervisor Grafana panels; this repo pins it to `2.87` in `globals.yml`.
 - CPU baseline is Nehalem; after editing `kolla/config/nova/nova-compute.conf`, run `kolla-ansible reconfigure -t nova -i ~/multinode`.
 - `live-migration/test.sh` creates `lm-test`; delete it manually afterward.
 

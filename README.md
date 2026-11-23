@@ -130,4 +130,4 @@ if it fails).
 | Nova/Glance/Gnocchi won't start | `findmnt /var/lib/nova-shared` etc. (GlusterFS must be mounted; the unmounted directory is immutable on purpose), `gluster peer status` |
 | Storage slow or degraded | `sudo gluster volume heal nova info`, `sudo gluster volume status` |
 | Prometheus 401 | user `admin`, `prometheus_password` from `/etc/kolla/passwords.yml` |
-| Billing dashboard empty | `openstack rating summary get`, rates configured?, `journalctl -u cloud-exporter -n 30` |
+| Billing dashboard empty | `openstack --rating-api-version 1 rating summary get`, rates configured?, `journalctl -u cloud-exporter -n 30`; per-flavor pricing needs the Nova inspector (libvirt pushes no flavor attrs) |

@@ -69,8 +69,8 @@ declare -A FLAVOR_VCPUS=(
 )
 declare -A FLAVOR_RAM=(
   [m1.small]=1024
-  [c1.medium]=2048
-  [c1.large]=4096
+  [c1.medium]=1024
+  [c1.large]=1024
 )
 
 read -r -a FLAVOR_ARRAY <<<"$FLAVOR_POOL"
@@ -83,7 +83,7 @@ if [ "${VMs_ONLY:-no}" = "yes" ]; then
     echo "No failed VMs recorded in $FAILED_VMS"
     exit 0
   fi
-  cp "$FAILED_VMS" "$tmpdir/vms.tsv"
+  sed 's/[[:space:]]*$//' "$FAILED_VMS" > "$tmpdir/vms.tsv"
   SKIP_RESOURCES=yes
 fi
 
@@ -418,7 +418,9 @@ done < "$tmpdir/projects.tsv"
 fi
 
 # Retry any VMs that failed on a previous run, then the newly planned ones.
-if [ -f "$FAILED_VMS" ] && [ -s "$FAILED_VMS" ]; then
+# In VMs_ONLY mode the failed list is already loaded into vms.tsv, so skip
+# this merge to avoid duplicating/corrupting the tab-separated columns.
+if [ -f "$FAILED_VMS" ] && [ -s "$FAILED_VMS" ] && [ "${VMs_ONLY:-no}" != "yes" ]; then
   echo "Retrying $(wc -l < "$FAILED_VMS") previously failed VM(s)..."
   cat "$FAILED_VMS" "$tmpdir/vms.tsv" > "$tmpdir/all_vms.tsv"
   awk -F '[ \t]+' '!seen[$2 SUBSEP $4]++' "$tmpdir/all_vms.tsv" > "$tmpdir/vms.tsv"
@@ -455,7 +457,7 @@ while IFS=$' \t' read -r client project network_index vm_index flavor public vcp
     ${az_args[@]+"${az_args[@]}"} \
     --wait; then
     echo "Error creating server: $vm_name" >&2
-    printf '%s\n' "$client\t$project\t$network_index\t$vm_index\t$flavor\t$public\t$vcpus\t$ram\t$host\t$role" >> "$tmpdir/failed_vms.tsv"
+    printf '%b\n' "$client\t$project\t$network_index\t$vm_index\t$flavor\t$public\t$vcpus\t$ram\t$host\t$role" >> "$tmpdir/failed_vms.tsv"
     continue
   fi
 

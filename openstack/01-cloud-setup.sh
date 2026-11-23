@@ -25,6 +25,9 @@ openstack flavor create m1.tiny   --vcpus 1 --ram 512  --disk 5
 openstack flavor create m1.small  --vcpus 1 --ram 1024 --disk 10
 openstack flavor create m1.medium --vcpus 2 --ram 2048 --disk 20
 openstack flavor create m1.large  --vcpus 4 --ram 4096 --disk 40
+# Extra flavors used by billing rates (c1.*). Created idempotently so re-runs do not fail.
+openstack flavor create c1.medium --vcpus 2 --ram 1024 --disk 10 2>/dev/null || true
+openstack flavor create c1.large  --vcpus 4 --ram 1024 --disk 10 2>/dev/null || true
 
 # --- Access (the default security group of the admin project)
 openstack security group rule create --proto icmp default
